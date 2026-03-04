@@ -27,7 +27,6 @@ dev = [
 
 [tool.setuptools]
 package-dir = {"" = "."}
-exclude = ["tests*","__dev*"]
 
 [tool.setuptools.packages.find]
 where = ["."]
