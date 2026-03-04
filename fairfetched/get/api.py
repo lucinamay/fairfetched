@@ -8,7 +8,7 @@ from polars import LazyFrame
 
 import fairfetched.get.chembl as chembl
 import fairfetched.get.papyrus as papyrus
-from fairfetched.get._utils import BASE_DIR
+from fairfetched.utils.main import BASE_DIR
 
 
 @dataclass(frozen=True)

@@ -3,9 +3,8 @@ from typing import Any
 
 import polars as pl
 
-from fairfetched.get._ensure import ensure_url
-
-from ._utils import (
+from fairfetched.utils.ensure import ensure_url
+from fairfetched.utils.main import (
     ComposedLFDict,
     _to_path,
     file_suffix_from_url,

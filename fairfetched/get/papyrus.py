@@ -9,8 +9,8 @@ from typing import Any
 
 import polars as pl
 
-from fairfetched.get._ensure import ensure_url
-from fairfetched.get._utils import (
+from fairfetched.utils.ensure import ensure_url
+from fairfetched.utils.main import (
     BASE_DIR,
     ComposedLFDict,
     _to_path,
