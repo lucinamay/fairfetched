@@ -1,110 +1,124 @@
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-import chembl_downloader
 import polars as pl
-import pystow
 
 from fairfetched.get._ensure import ensure_url
 
-from ._utils import Database, file_suffix_from_url, sqlite_db_to_parquets
+from ._utils import (
+    ComposedLFDict,
+    _to_path,
+    file_suffix_from_url,
+    lowercase_columns,
+    sqlite_db_to_parquets,
+    untar_sqlite,
+)
 
-CHEMBL36 = Database(
-    name="chembl",
-    version="36",
-    sources={
-        "db": "https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases/chembl_36/chembl_36_sqlite.tar.gz"
-    },
-)  # @TODO: implement like this
-
-
-@dataclass(frozen=True)
-class SQL_db:
-    path: Path
-
-    @property
-    def tables(self):
-        return sqlite_db_to_parquets(self.path)
+ROOT_DIR = Path("/.data/fairfetched/chembl")
 
 
-def _version_formatter(version: str | float | int | None) -> str:
-    if version in [None, "latest"]:
-        version = "36"  # @TODO: automate
+def __version_formatter(version: int | float | str) -> str:
     if isinstance(version, int | float):
         version = str(version)
     if not isinstance(version, str):
-        raise ValueError(f"invalid version: {version}")
+        try:
+            version = str(version)
+        finally:
+            raise TypeError(f"invalid version type: {type(version)}")
 
     version = version.lstrip("0")
-    # for versions 22.1 and 24.1, it's important to canonicalize the version number
-    # for versions < 10 it's important to left pad with a zero
+    # for canonicalize the version number 22.1 and 24.1 and left pad with a zero if needed
     return version.replace(".", "_").zfill(2)
 
 
-def _version_picker(version: str | float | int) -> Database:
-    version = _version_formatter(version)
-    chembl_host = "https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases"
-    version_base = f"{chembl_host}/chembl_{version}"
-    return Database(
-        name="chembl",
-        version=version,
-        sources={
-            "sql_db": f"{version_base}_sqlite.tar.gz",
-        },
+def _version_to_url(version: str):
+    base = "https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases"
+    return f"{base}/chembl_{version}/chembl_{version}"
+
+
+CHEMBL_VERSIONS: dict[str, dict[str, str]] = {
+    version: {"sql_db": _version_to_url(version)}
+    for version in sorted(
+        map(__version_formatter, list(range(1, 37)) + ["24_1", "22_1"])
     )
+}
 
 
-def ensure_raw_sql(
-    sources: dict[str, str] = CHEMBL36.sources,
-    folder: Path | str = Path.cwd(),
-) -> dict[str, Path]:
-    return {
-        k: ensure_url(url=v, path=Path(folder) / v.split("/")[-1])
-        for k, v in sources.items()
-    }
+def available_versions() -> tuple[str, ...]:
+    return tuple(CHEMBL_VERSIONS.keys())
+
+
+def latest() -> str:
+    return available_versions()[-1]
+
+
+def get_sources(version: str) -> dict[str, str]:
+    return CHEMBL_VERSIONS[str(version)]
 
 
 def ensure_raw(
-    sources: dict[str, str] = CHEMBL36.sources,
-    folder: Path | str = pystow.module("chembl").join("raw"),
-    return_only_parquets: bool = True,
+    version: str, cache_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
-    """returns a dictionary with the paths (in the same folder) of both the raw sql database file
-    and the underlying tables in parquet form"""
-    raw_paths = ensure_raw_sql(sources, folder)
-    raw_paths.update(sqlite_db_to_parquets(raw_paths["sql_db"]))
-    if return_only_parquets:
-        raw_paths.pop("sql_db")
-    return raw_paths
+    """downloads the original sql database, with its original name and compression"""
+    if cache_dir is None:
+        cache_dir = ROOT_DIR / version
+    cache_dir = _to_path(cache_dir)
+
+    return {
+        name: ensure_url(
+            url=url, path=_to_path(cache_dir) / f"{file_suffix_from_url(url)}"
+        )
+        for name, url in get_sources(version).items()
+    }
 
 
-def ensure_clean(raw_parquets: dict[str, Path]) -> Path:
-    raise NotImplementedError
+def extract_sqlite(
+    sql_tar_gz_path: Path | str, cache_dir: Path | str | Any | None = None
+) -> dict[str, Path]:
+    if cache_dir is None:
+        cache_dir = Path(sql_tar_gz_path).parent / "extracted"
+
+    raw_sql = untar_sqlite(sql_tar_gz_path)
+    parquets = sqlite_db_to_parquets(raw_sql, cache_dir=cache_dir)
+    return parquets
 
 
-def ensure_lfs(clean_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
-    return {k: pl.scan_parquet(v) for k, v in clean_paths.items()}
+def clean(extracted_sqlite_parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
+    return {
+        name: pl.scan_parquet(path_)
+        .pipe(lowercase_columns)
+        .fill_nan(None)
+        .with_columns(
+            pl.col(pl.String).replace({"", None}),
+        )
+        for name, path_ in extracted_sqlite_parquet_paths.items()
+    }
 
 
-def ensure_raw_and_lfs(
-    version: str,
-    raw_folder: str | Path = Path.cwd(),
-    parquet_folder: str | Path = Path.cwd(),
-):
-    chembl: Database = _version_picker(version)
-    raw_paths = ensure_raw(sources=chembl.sources, folder=raw_folder)
-    raw_parquets = ensure_raw_parquets(raw_paths)
-
-    return raw_filepaths, ensure_lfs(ensure_raw_parquets)
+def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
+    """Join/combine lazy frames. Optional, returns single LF."""
+    return {
+        "bioactivity": _bioactivities(lfs),
+        "compounds": _compounds(lfs),
+        "proteins": lfs["protein"],
+        "components": _components(lfs),
+    }
 
 
-def activity(lfs) -> pl.LazyFrame:
+def _bioactivities(lfs) -> pl.LazyFrame:
     return (
         # dfs["activity_properties"]
         # .join(dfs["activities"], on="activity_id", how="left")
         # .join(dfs["action_type"], on="action_type", how="left")
         # .join
-        lfs["activities"]
+        lfs["bioactivity"]
+        .join(
+            lfs["protein"],
+            on="target_id",
+            how="left",
+            maintain_order="left",
+            validate="m:1",  # one unique protein only from right, can reoccur within compounds.
+        )
         .join(lfs["action_type"], on="action_type", how="left", suffix="_action_type")
         .join(
             lfs["assays"], on="assay_id", how="left", suffix="_assay"
@@ -115,19 +129,19 @@ def activity(lfs) -> pl.LazyFrame:
     )
 
 
-def components(dfs) -> pl.LazyFrame:
+def _components(lfs) -> pl.LazyFrame:
     return (
-        dfs["component_sequences"]
+        lfs["component_sequences"]
         .join(
-            dfs["component_class"],
+            lfs["component_class"],
             on="component_id",
             how="left",
             suffix="_class",
             validate="1:m",
         )
         .join(
-            dfs["component_domains"].join(
-                dfs["domains"],
+            lfs["component_domains"].join(
+                lfs["domains"],
                 on="domain_id",
                 how="left",
                 suffix="_domains",
@@ -145,4 +159,43 @@ def components(dfs) -> pl.LazyFrame:
         #     suffix="_synonyms",
         #     validate="m:m",
         # )
+    )
+
+
+def _compounds(lfs) -> pl.LazyFrame:
+    return (
+        lfs["molecule_dictionary"]
+        .join(
+            lfs["compound_properties"],
+            on="molregno",
+            how="left",
+            suffix="_compound_properties",
+            validate="1:1",
+        )
+        .join(
+            lfs["compound_structures"],
+            on="molregno",
+            how="left",
+            suffix="_compound_structures",
+            validate="1:1",
+        )
+        .join(
+            lfs["compound_records"].join(
+                lfs["docs"], on="doc_id", how="left", suffix="_doc", validate="m:1"
+            ),
+            on="molregno",
+            how="left",
+            suffix="_compound_records",
+            validate="1:m",
+        )
+        .join(
+            lfs["compound_structural_alerts"],
+            #     .join(
+            #     dfs["docs"], on="doc_id", how="left", suffix="_doc",validate="m:1"
+            # )
+            on="molregno",
+            how="left",
+            suffix="_compound_structural_alerts",
+            validate="1:m",
+        )
     )

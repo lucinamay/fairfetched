@@ -1,113 +1,87 @@
-"""Papyrus dataset utilities for downloading, cleaning, and joining drug and protein data.
+"""Papyrus dataset utilities for downloading, cleaning, and joining bioactivity and protein data.
 
 This module provides functions to ensure the presence of raw and cleaned Papyrus dataset files,
 and defines the Papyrus_57 database configuration.
 """
 
 from pathlib import Path
+from typing import Any
 
 import polars as pl
-import pystow  # @TODO: remove pystow dependency
 
+from fairfetched.get._ensure import ensure_url
 from fairfetched.get._utils import (
-    Database,
+    BASE_DIR,
+    ComposedLFDict,
+    _to_path,
     file_suffix_from_url,
     lowercase_columns,
     scan_tsvxz,
 )
 
-PAPYRUS_57 = Database(
-    name="papyrus",
-    version="05.7",
-    sources={
-        "drug": "https://zenodo.org/records/13987985/files/05.7_combined_set_without_stereochemistry.tsv.xz?download=1",
+PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
+    "05.7": {
+        "bioactivity": "https://zenodo.org/records/13987985/files/05.7_combined_set_without_stereochemistry.tsv.xz?download=1",
         "readme": "https://zenodo.org/records/13987985/files/README.txt?download=1",
         "protein": "https://zenodo.org/records/13987985/files/05.7_combined_set_protein_targets.tsv.xz?download=1",
     },
-)
+    "05.6": {
+        "bioactivity": "https://zenodo.org/records/7373214/files/05.6_combined_set_without_stereochemistry.tsv.xz?download=1",
+        "readme": "https://zenodo.org/records/7373214/files/README.txt?download=1",
+        "protein": "https://zenodo.org/records/7373214/files/05.6_combined_set_protein_targets.tsv.xz?download=1",
+    },
+}
 
 
-def _version_picker(version: str = "latest") -> Database:
-    match version:
-        case "05.7" | "latest":
-            return PAPYRUS_57
-        case _:
-            raise ValueError("version not (yet) implemented")
+def available_versions() -> tuple[str, ...]:
+    return tuple(PAPYRUS_VERSIONS.keys())
+
+
+def latest() -> str:
+    return available_versions()[-1]
+
+
+def get_sources(version: str) -> dict[str, str]:
+    return PAPYRUS_VERSIONS[str(version)]
 
 
 def ensure_raw(
-    sources: dict[str, str] = PAPYRUS_57.sources,
-    pystow_module: pystow.Module = pystow.module("papyrus", "raw"),
+    version: str, cache_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
-    """
-    Download and ensure the presence of raw Papyrus dataset files.
-
-    Args:
-        sources (dict[str, str]): Mapping of file keys to download URLs.
-        pystow_module (pystow.Module): Pystow module for storage.
-
-    Returns:
-        dict[str, Path]: Mapping of file keys to local file paths.
-    """
+    """Download if missing, return path to raw file."""
+    if cache_dir is None:
+        cache_dir = BASE_DIR / version
+    cache_dir = _to_path(cache_dir)
 
     return {
-        k: pystow_module.ensure("papyrus", name=f"{k}{file_suffix_from_url(v)}", url=v)
-        for k, v in sources.items()
+        name: ensure_url(
+            url=url, path=_to_path(cache_dir) / f"{file_suffix_from_url(url)}"
+        )
+        for name, url in get_sources(version).items()
     }
 
 
-def ensure_clean(
-    raw_filepath_dict: dict[str, Path],
-    clean_filepath: Path | str = pystow.module("papyrus").join("clean")
-    / "papyrus_clean.parquet",
-) -> Path:
-    """
-    Ensure the presence of a cleaned and joined Papyrus dataset as a Parquet file.
-    Data is not changed, only formats and datatypes (and None values)
-    Downloads raw files if needed, processes and joins drug and protein data,
-    and saves the result as a Parquet file.
+def clean(raw_filepath_dict: dict[str, Path]) -> dict[str, pl.LazyFrame]:
+    """Transform raw → clean, return lazy frames. No I/O."""
+    schema_overrides = {
+        "Year": pl.Int32,
+        "pchembl_value_Mean": pl.Float64,
+        "pchembl_value_StdDev": pl.Float64,
+        "pchembl_value_SEM": pl.Float64,
+        "pchembl_value_N": pl.Float64,
+        "pchembl_value_Median": pl.Float64,
+        "pchembl_value_MAD": pl.Float64,
+    }
 
-    Args:
-    ---
-        raw_filepath_dict (dict[str, Path]): a dictionary of paths to each raw file as returned by `ensure_raw`
-        pystow_module (pystow.Module): Pystow module for storage.
-
-    Returns:
-    ---
-        Path: Path to the cleaned Parquet data file.
-
-    Example:
-    ---
-        ```
-        raw_paths = ensure_raw(
-            PAPYRUS_57.sources, pystow.module("papyrus", "raw")
-        )
-        clean_path = ensure_clean(raw_paths, clean_papyrus.parquet)
-
-        # pl.read_parquet(clean_path).pipe(mol_standardisation_fnx) etc...
-        ```
-    """
-
-    data_file = Path(clean_filepath)
-    if not data_file.exists():
-        schema_overrides = {
-            "Year": pl.Int32,
-            "pchembl_value_Mean": pl.Float64,
-            "pchembl_value_StdDev": pl.Float64,
-            "pchembl_value_SEM": pl.Float64,
-            "pchembl_value_N": pl.Float64,
-            "pchembl_value_Median": pl.Float64,
-            "pchembl_value_MAD": pl.Float64,
-        }
-
-        proteins = (
+    return {
+        "protein": (
             scan_tsvxz(raw_filepath_dict["protein"], separator="\t")
             .pipe(lowercase_columns)
             .rename({"uniprotid": "uniprot_id"})
-        )
-        compounds = (
+        ),
+        "bioactivity": (
             scan_tsvxz(
-                raw_filepath_dict["drug"],
+                raw_filepath_dict["bioactivity"],
                 separator="\t",
                 infer_schema=False,
                 schema_overrides=schema_overrides,
@@ -115,23 +89,43 @@ def ensure_clean(
             )
             .pipe(lowercase_columns)
             .cast({"pchembl_value_n": pl.Int64})
-        )
+        ),
+    }
 
-        compounds.join(
-            proteins,
+
+def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
+    """Join/combine lazy frames. Optional, returns single LF."""
+    return {
+        "bioactivity": lfs["bioactivity"].join(
+            lfs["protein"],
             on="target_id",
             how="left",
             maintain_order="left",
             validate="m:1",  # one unique protein only from right, can reoccur within compounds.
-        ).sink_parquet(data_file)
-    return data_file
+        ),
+        "compounds": lfs["bioactivity"]
+        .drop(
+            "activity_id",
+        )
+        .unique(("connectivity", "inchikey", "inchi")),
+        "full": lfs["bioactivity"].join(
+            lfs["protein"],
+            on="target_id",
+            how="left",
+            maintain_order="left",
+            validate="m:1",  # one unique protein only from right, can reoccur within compounds.
+        ),
+    }
 
 
-def ensure_raw_and_clean(
-    version: str = "05.7",
-    pystow_module_raw: pystow.Module = pystow.module("papyrus", "raw"),
-    clean_filepath: Path | str = pystow.module("papyrus").join("clean"),
-) -> tuple[dict[str, Path], Path]:
-    papyrus: Database = _version_picker(version)
-    raw_filepaths = ensure_raw(sources=papyrus.sources, pystow_module=pystow_module_raw)
-    return raw_filepaths, ensure_clean(raw_filepaths, clean_filepath)
+def help() -> None:
+    """prints out example usage"""
+    print("""
+        Example usage:
+        ```
+        raw = ensure_raw("05.7")
+        lfs = clean(raw)
+        final_lf = compose(lfs)
+        final_lf.sink_parquet("output.parquet")
+        ```
+        """)
