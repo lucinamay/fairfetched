@@ -20,12 +20,14 @@ from fairfetched.utils.typing import ComposedLFDict
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
     "05.7": {
-        "bioactivity": "https://zenodo.org/records/13987985/files/05.7_combined_set_without_stereochemistry.tsv.xz?download=1",
+        "bioactivity": "https://zenodo.org/records/13987985/files/05.7_combined_set_with_stereochemistry.tsv.xz?download=1",
+        # "bioactivity_nostereochemistry": "https://zenodo.org/records/13987985/files/05.7_combined_set_without_stereochemistry.tsv.xz?download=1",
         "readme": "https://zenodo.org/records/13987985/files/README.txt?download=1",
         "protein": "https://zenodo.org/records/13987985/files/05.7_combined_set_protein_targets.tsv.xz?download=1",
     },
     "05.6": {
-        "bioactivity": "https://zenodo.org/records/7373214/files/05.6_combined_set_without_stereochemistry.tsv.xz?download=1",
+        "bioactivity": "https://zenodo.org/records/7373214/files/05.6_combined_set_with_stereochemistry.tsv.xz?download=1",
+        # "bioactivity_nostereochemistry": "https://zenodo.org/records/7373214/files/05.6_combined_set_without_stereochemistry.tsv.xz?download=1",
         "readme": "https://zenodo.org/records/7373214/files/README.txt?download=1",
         "protein": "https://zenodo.org/records/7373214/files/05.6_combined_set_protein_targets.tsv.xz?download=1",
     },

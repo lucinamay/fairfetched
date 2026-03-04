@@ -16,9 +16,11 @@ or if you do not use the uv package manager:
   - [ ] efficient nested filtering
   - [ ] all-version support
   - [ ] built-in pivots
-- [ ] chembl database 
-  - [ ] database to tables
+- [ ] chembl database support
+  - [x] database to tables
   - [ ] intuitive pre-merged flat files
   - [ ] database visualisation 
-- [ ] minimise dependencies
 - [ ] reproducible chembl and papyrus standardisation
+- [ ] automated time-url logging and manifest files
+- [ ] minimisation of dependencies
+- [ ] support for other databases
