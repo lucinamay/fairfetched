@@ -83,7 +83,7 @@ def clean(extracted_sqlite_parquet_paths: dict[str, Path]) -> dict[str, pl.LazyF
         .pipe(lowercase_columns)
         .fill_nan(None)
         .with_columns(
-            pl.col(pl.String).replace({"", None}),
+            pl.col(pl.String).replace({"": None}),
         )
         for name, path_ in extracted_sqlite_parquet_paths.items()
     }

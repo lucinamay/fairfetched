@@ -1,6 +1,6 @@
 [project]
 name = "fairfetched"
-version = "0.1.0-alpha"
+version = "0.0.1-20260204"
 description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -11,14 +11,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vis = [
-    "sqlalchemy>=2.0.46",
+rdkit = [
+    "rdkit>=2025.9.6",
 ]
-download = [
-    "chembl-downloader>=0.5.2",
+standardise = [
+    "fairfetched[rdkit]",
+    "papyrus-structure-pipeline>=0.0.5",
 ]
 dev = [
     "pytest>=9.0.2",
+    "sqlalchemy>=2.0.46",
+    "fairfetched[standardise]",
 ]
 
 
