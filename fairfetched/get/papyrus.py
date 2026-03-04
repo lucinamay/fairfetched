@@ -9,15 +9,14 @@ from typing import Any
 
 import polars as pl
 
-from fairfetched.utils.ensure import ensure_url
-from fairfetched.utils.main import (
+from fairfetched.utils import (
     BASE_DIR,
-    ComposedLFDict,
-    _to_path,
+    ensure_url,
     file_suffix_from_url,
     lowercase_columns,
     scan_tsvxz,
 )
+from fairfetched.utils.typing import ComposedLFDict
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
     "05.7": {
@@ -50,13 +49,11 @@ def ensure_raw(
 ) -> dict[str, Path]:
     """Download if missing, return path to raw file."""
     if cache_dir is None:
-        cache_dir = BASE_DIR / version
-    cache_dir = _to_path(cache_dir)
+        cache_dir = BASE_DIR / "papyrus" / version
+    cache_dir = Path(cache_dir)
 
     return {
-        name: ensure_url(
-            url=url, path=_to_path(cache_dir) / f"{file_suffix_from_url(url)}"
-        )
+        name: ensure_url(url=url, path=cache_dir / f"{file_suffix_from_url(url)}")
         for name, url in get_sources(version).items()
     }
 

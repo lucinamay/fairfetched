@@ -3,17 +3,17 @@ from typing import Any
 
 import polars as pl
 
-from fairfetched.utils.ensure import ensure_url
-from fairfetched.utils.main import (
-    ComposedLFDict,
-    _to_path,
+from fairfetched.utils import (
+    BASE_DIR,
+    ensure_url,
     file_suffix_from_url,
     lowercase_columns,
     sqlite_db_to_parquets,
     untar_sqlite,
 )
+from fairfetched.utils.typing import ComposedLFDict
 
-ROOT_DIR = Path("/.data/fairfetched/chembl")
+CHEMBL_DIR = BASE_DIR / "chembl"
 
 
 def __version_formatter(version: int | float | str) -> str:
@@ -55,18 +55,13 @@ def get_sources(version: str) -> dict[str, str]:
     return CHEMBL_VERSIONS[str(version)]
 
 
-def ensure_raw(
-    version: str, cache_dir: Path | str | Any | None = None
-) -> dict[str, Path]:
+def ensure_raw(version: str, cache_dir: Path | str | None = None) -> dict[str, Path]:
     """downloads the original sql database, with its original name and compression"""
     if cache_dir is None:
-        cache_dir = ROOT_DIR / version
-    cache_dir = _to_path(cache_dir)
-
+        cache_dir = CHEMBL_DIR / version
+    cache_dir = Path(cache_dir)
     return {
-        name: ensure_url(
-            url=url, path=_to_path(cache_dir) / f"{file_suffix_from_url(url)}"
-        )
+        name: ensure_url(url=url, path=cache_dir / f"{file_suffix_from_url(url)}")
         for name, url in get_sources(version).items()
     }
 

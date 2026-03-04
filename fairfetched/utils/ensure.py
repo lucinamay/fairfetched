@@ -1,8 +1,10 @@
+import datetime
 import logging as lg
 from pathlib import Path
 
 import requests
-from rich.progress import track
+
+from ._track import track
 
 
 def ensure_url(url: str, path: Path, force: bool = False) -> Path:
@@ -21,8 +23,8 @@ def ensure_url(url: str, path: Path, force: bool = False) -> Path:
         for chunk in track(
             response.iter_content(chunk_size=chunk_size),
             total=(total // chunk_size) + int(total % chunk_size != 0),
-            description=f"downloading {url.split('/')[-1]}",
+            desc=f"downloading {url.split('/')[-1]}",
         ):
             f.write(chunk)
-    lg.debug(f"Downloaded {url} to {path}")
+    lg.info(f"Downloaded {url} to {path} on {datetime.datetime.now()}")
     return path
