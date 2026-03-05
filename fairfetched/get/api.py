@@ -69,7 +69,7 @@ class Chembl(_Base):
         cls,
         version: str | int | float,
         root_dir: Path | str = f"{BASE_DIR}/chembl",
-    ):
+    ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
         version = chembl.__version_formatter(version)
         dir = Path(root_dir) / version
@@ -91,7 +91,7 @@ class Chembl(_Base):
         )
 
     @classmethod
-    def from_latest(cls, root_dir):
+    def from_latest(cls, root_dir) -> "Chembl":
         return cls.from_version(version=cls.module.latest(), root_dir=root_dir)
 
 
@@ -104,7 +104,7 @@ class Papyrus(_Base):
         cls,
         version: str,
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
-    ):
+    ) -> "Papyrus":
         """Downloads Chembl for version if not yet present in the given cache directory"""
         dir = Path(root_dir) / version
         raw_paths: dict[str, Path] = cls.module.ensure_raw(
@@ -123,5 +123,5 @@ class Papyrus(_Base):
     def from_latest(
         cls,
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
-    ):
+    ) -> "Papyrus":
         return cls.from_version(version=cls.module.latest(), root_dir=root_dir)

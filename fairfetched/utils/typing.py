@@ -1,7 +1,6 @@
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 
-if TYPE_CHECKING:
-    from polars import LazyFrame
+from polars import LazyFrame
 
 
 class ComposedLFDict(TypedDict):

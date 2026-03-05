@@ -14,9 +14,8 @@ from rdkit.Chem import (
 )
 from rdkit.Chem.inchi import InchiToInchiKey
 
+from fairfetched.standardisation.optional import papyrus_standardise
 from fairfetched.utils._track import track
-
-from .optional import papyrus_standardise
 
 
 def _smiles_to_clean_mol(smiles: str) -> Mol | None:
