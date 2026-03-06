@@ -109,6 +109,10 @@ class Chembl(_Base):
 class Papyrus(_Base):
     module: ModuleType = papyrus
 
+    @property
+    def proteins(self) -> LazyFrame:
+        return self.compose()["proteins"]
+
     @classmethod
     def from_version(
         cls,
