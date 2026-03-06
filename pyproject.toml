@@ -1,6 +1,6 @@
 [project]
 name = "fairfetched"
-version = "0.0.1-20260304"
+version = "0.0.1-20260306"
 description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,8 +31,17 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.uv.workspace]
+members = [
+    ".",
+]
+
+[tool.uv.sources]
+fairfetched = { workspace = true, editable = true }
+
 [dependency-groups]
 dev = [
+    "fairfetched",
     "pytest>=9.0.2",
 ]
 

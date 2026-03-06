@@ -26,7 +26,7 @@ wheels = [
 
 [[package]]
 name = "fairfetched"
-version = "0.0.1.post20260304"
+version = "0.0.1.post20260306"
 source = { virtual = "." }
 dependencies = [
     { name = "polars" },
@@ -53,13 +53,14 @@ track = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fairfetched" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'" },
-    { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'" },
+    { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", virtual = "." },
+    { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'", virtual = "." },
     { name = "papyrus-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=0.0.5" },
     { name = "polars", specifier = ">=1.38.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
@@ -71,7 +72,10 @@ requires-dist = [
 provides-extras = ["track", "rdkit", "standardise", "dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.2" }]
+dev = [
+    { name = "fairfetched", virtual = "." },
+    { name = "pytest", specifier = ">=9.0.2" },
+]
 
 [[package]]
 name = "greenlet"
