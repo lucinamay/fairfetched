@@ -15,7 +15,7 @@ def file_suffix_from_url(url: str) -> str:
     return match_.group(0)
 
 
-def untar_sqlite(tar_gz_path: str | Path) -> Path:
+def ensure_untarred_sqlite(tar_gz_path: str | Path) -> Path:
     files: list[Path] = []
     with tarfile.open(tar_gz_path, mode="r", encoding="utf-8") as tar_file:
         for tar_subfile in tar_file:

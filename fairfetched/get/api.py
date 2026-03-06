@@ -9,15 +9,22 @@ from polars import LazyFrame
 import fairfetched.get.chembl as chembl
 import fairfetched.get.papyrus as papyrus
 from fairfetched.utils import BASE_DIR
+from fairfetched.utils.typing import ComposedLFDict, DatasetGetModule
 
 
 @dataclass(frozen=True)
 class _Base:
     version: str
     raw_paths: dict[str, Path]
-    lfs: dict[str, LazyFrame]
+    consolidated_paths: dict[str, Path]
     dir: Path
-    module: ModuleType
+    module: DatasetGetModule
+
+    def __str__(self) -> str:
+        return f"{self.name}_{self.version}"
+
+    def __repr__(self) -> str:
+        return f"<{self.name.capitalize()}_{self.version} at {self.dir}"
 
     def __hash__(self):
         return hash(
@@ -30,20 +37,24 @@ class _Base:
 
     @cached_property
     def sources(self) -> dict[str, str]:
-        return self.module.get_sources(self.version)
+
+        sources = self.module.get_sources(self.version)
+        return sources
 
     @property
-    def composed(self) -> dict[str, LazyFrame]:
-        lfs = self.module.compose(self.lfs)
-        return lfs
+    def lfs(self) -> dict[str, LazyFrame]:
+        return self.module.clean(self.consolidated_paths)
+
+    def compose(self) -> ComposedLFDict:
+        return self.module.compose(self.lfs)
 
     @property
     def bioactivity(self) -> LazyFrame:
-        return self.composed["bioactivity"]
+        return self.compose()["bioactivity"]
 
     @property
     def compounds(self) -> LazyFrame:
-        return self.composed["compounds"]
+        return self.compose()["compounds"]
 
     @classmethod
     @cached_property
@@ -54,11 +65,10 @@ class _Base:
 @dataclass(frozen=True)
 class Chembl(_Base):
     module: ModuleType = chembl
-    extracted_table_paths: dict[str, Path] | None = None
 
     @cached_property
     def activity(self) -> LazyFrame:
-        return self.composed["activity"]
+        return self.compose()["bioactivity"]
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -71,28 +81,28 @@ class Chembl(_Base):
         root_dir: Path | str = f"{BASE_DIR}/chembl",
     ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
-        version = chembl.__version_formatter(version)
+        version = chembl._version_formatter(version)
         dir = Path(root_dir) / version
 
-        raw_paths: dict[str, Path] = cls.module.ensure_raw(
-            version, cache_dir=dir / "raw"
+        raw_paths: dict[str, Path] = chembl.ensure_raw(version, raw_dir=dir / "raw")
+
+        consolidated_paths = chembl.ensure_consolidated(
+            raw_paths, consolidated_dir=dir / "consolidated"
         )
-        extracted_table_paths = cls.module.extract_sqlite(
-            raw_paths["sql_db"], cache_dir=dir / "extracted"
-        )
-        lfs = cls.module.clean(extracted_table_paths)
         return Chembl(
             version=version,
             raw_paths=raw_paths,
-            lfs=lfs,
+            consolidated_paths=consolidated_paths,
             dir=dir,
             module=cls.module,
-            extracted_table_paths=extracted_table_paths,
         )
 
     @classmethod
-    def from_latest(cls, root_dir) -> "Chembl":
-        return cls.from_version(version=cls.module.latest(), root_dir=root_dir)
+    def from_latest(
+        cls,
+        root_dir: Path | str = f"{BASE_DIR}/chembl",
+    ) -> "Chembl":
+        return cls.from_version(version=chembl.latest(), root_dir=root_dir)
 
 
 @dataclass(frozen=True)
@@ -107,14 +117,14 @@ class Papyrus(_Base):
     ) -> "Papyrus":
         """Downloads Chembl for version if not yet present in the given cache directory"""
         dir = Path(root_dir) / version
-        raw_paths: dict[str, Path] = cls.module.ensure_raw(
-            version, cache_dir=dir / "raw"
+        raw_paths: dict[str, Path] = papyrus.ensure_raw(version, raw_dir=dir / "raw")
+        consolidated_paths: dict[str, Path] = papyrus.ensure_consolidated(
+            raw_paths, consolidated_dir=dir / "consolidated"
         )
-        lfs = cls.module.clean(raw_paths)
         return Papyrus(
             version=version,
             raw_paths=raw_paths,
-            lfs=lfs,
+            consolidated_paths=consolidated_paths,
             dir=dir,
             module=cls.module,
         )
@@ -124,4 +134,11 @@ class Papyrus(_Base):
         cls,
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
-        return cls.from_version(version=cls.module.latest(), root_dir=root_dir)
+        return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
+
+
+if __name__ == "__main__":
+    p = Papyrus.from_latest()
+    p.compose()
+
+    p.lfs["proteins"]
