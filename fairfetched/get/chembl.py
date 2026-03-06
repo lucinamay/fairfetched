@@ -26,8 +26,10 @@ def _version_formatter(version: int | float | str) -> str:
             raise TypeError(f"invalid version type: {type(version)}")
 
     version = version.lstrip("0")
+    if "." in version:
+        version = version.split(".")[0].zfill(2) + "." + version.split(".")[1]
     # for canonicalize the version number 22.1 and 24.1 and left pad with a zero if needed
-    return version.replace(".", "_").zfill(2)
+    return version.replace(".", "_").replace("_0", "").zfill(2)
 
 
 def _version_to_url(version: str):
