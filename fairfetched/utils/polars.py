@@ -1,3 +1,4 @@
+import logging
 import lzma
 import os
 import sqlite3
@@ -6,8 +7,12 @@ from pathlib import Path
 
 import polars as pl
 
+from fairfetched.utils._track import track
+
 
 def scan_tsvxz(path: str | Path, **kwargs) -> pl.LazyFrame:
+    logging.debug(f"scanning {path}")
+    print(f"scanning {path}")
     with lzma.open(str(path), "rb") as f_lzma:
         return pl.scan_csv(f_lzma, **kwargs)
 
@@ -54,8 +59,8 @@ def _sqlite_tables(db_path: str | Path) -> list[str]:
         )
 
 
-def sqlite_db_to_parquets(
-    db_path: str | Path, cache_dir: str | Path | None = None
+def ensure_sqlite_db_to_parquets(
+    db_path: str | Path, cache_dir: str | Path | None = None, force: bool = False
 ) -> dict[str, Path]:
     """extracts a sqlite database into its tabular data as parquet files"""
     db_path = Path(db_path)
@@ -84,8 +89,10 @@ def sqlite_db_to_parquets(
 
     # load tables
     out = {}
-    for t in tables:
+    for t in track(tables, desc="exctracting tables from sqlite"):
         path_out = Path(cache_dir) / f"{t}.parquet"
+        if path_out.exists() and not force:
+            continue
         out[t] = path_out
         if not path_out.exists():
             pl.read_database(

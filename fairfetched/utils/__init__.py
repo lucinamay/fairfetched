@@ -1,6 +1,6 @@
 from .ensure import ensure_url
-from .files import file_suffix_from_url, untar_sqlite
-from .polars import lowercase_columns, scan_tsvxz, sqlite_db_to_parquets
+from .files import ensure_untarred_sqlite, file_suffix_from_url
+from .polars import ensure_sqlite_db_to_parquets, lowercase_columns, scan_tsvxz
 from .storage import BASE_DIR
 
 __all__ = [
@@ -9,6 +9,6 @@ __all__ = [
     lowercase_columns,
     scan_tsvxz,
     file_suffix_from_url,
-    sqlite_db_to_parquets,
-    untar_sqlite,
+    ensure_sqlite_db_to_parquets,
+    ensure_untarred_sqlite,
 ]

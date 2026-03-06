@@ -1,6 +1,6 @@
 from typing import Iterable
 
-from _optional import in_marimo, rich_track, tqdm_track
+from ._optional import in_marimo, rich_track, tqdm_track
 
 
 def track(iterable: Iterable, desc: str = "", total: int | None = None):

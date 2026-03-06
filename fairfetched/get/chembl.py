@@ -5,18 +5,18 @@ import polars as pl
 
 from fairfetched.utils import (
     BASE_DIR,
+    ensure_sqlite_db_to_parquets,
+    ensure_untarred_sqlite,
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
-    sqlite_db_to_parquets,
-    untar_sqlite,
 )
 from fairfetched.utils.typing import ComposedLFDict
 
 CHEMBL_DIR = BASE_DIR / "chembl"
 
 
-def __version_formatter(version: int | float | str) -> str:
+def _version_formatter(version: int | float | str) -> str:
     if isinstance(version, int | float):
         version = str(version)
     if not isinstance(version, str):
@@ -26,19 +26,21 @@ def __version_formatter(version: int | float | str) -> str:
             raise TypeError(f"invalid version type: {type(version)}")
 
     version = version.lstrip("0")
+    if "." in version:
+        version = version.split(".")[0].zfill(2) + "." + version.split(".")[1]
     # for canonicalize the version number 22.1 and 24.1 and left pad with a zero if needed
-    return version.replace(".", "_").zfill(2)
+    return version.replace(".", "_").replace("_0", "").zfill(2)
 
 
 def _version_to_url(version: str):
     base = "https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases"
-    return f"{base}/chembl_{version}/chembl_{version}"
+    return f"{base}/chembl_{version}/chembl_{version}_sqlite.tar.gz"
 
 
 CHEMBL_VERSIONS: dict[str, dict[str, str]] = {
     version: {"sql_db": _version_to_url(version)}
     for version in sorted(
-        map(__version_formatter, list(range(1, 37)) + ["24_1", "22_1"])
+        map(_version_formatter, list(range(1, 37)) + ["24_1", "22_1"])
     )
 }
 
@@ -55,25 +57,33 @@ def get_sources(version: str) -> dict[str, str]:
     return CHEMBL_VERSIONS[str(version)]
 
 
-def ensure_raw(version: str, cache_dir: Path | str | None = None) -> dict[str, Path]:
+def ensure_raw(version: str, raw_dir: Path | str | None = None) -> dict[str, Path]:
     """downloads the original sql database, with its original name and compression"""
-    if cache_dir is None:
-        cache_dir = CHEMBL_DIR / version
-    cache_dir = Path(cache_dir)
+    if raw_dir is None:
+        raw_dir = CHEMBL_DIR / version
+    raw_dir = Path(raw_dir)
     return {
-        name: ensure_url(url=url, path=cache_dir / f"{file_suffix_from_url(url)}")
+        name: ensure_url(url=url, path=raw_dir / f"{file_suffix_from_url(url)}")
         for name, url in get_sources(version).items()
     }
 
 
-def extract_sqlite(
-    sql_tar_gz_path: Path | str, cache_dir: Path | str | Any | None = None
+def ensure_consolidated(
+    raw_paths: dict[str, Path], consolidated_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
-    if cache_dir is None:
-        cache_dir = Path(sql_tar_gz_path).parent / "extracted"
+    sql_tar_gz_path = raw_paths["sql_db"]
+    if consolidated_dir is None:
+        consolidated_dir = Path(sql_tar_gz_path).parent / "extracted"
+    consolidated_dir = Path(consolidated_dir)
+    consolidated_dir.mkdir(exist_ok=True, parents=True)
 
-    raw_sql = untar_sqlite(sql_tar_gz_path)
-    parquets = sqlite_db_to_parquets(raw_sql, cache_dir=cache_dir)
+    raw_sql = ensure_untarred_sqlite(sql_tar_gz_path)
+    # the untarred should also stay so that we have access.....
+    # #@TODO: perhaps make tables deterministic for chembl to circumvent
+    parquets = ensure_sqlite_db_to_parquets(
+        raw_sql, cache_dir=consolidated_dir, force=False
+    )
+
     return parquets
 
 
@@ -99,7 +109,7 @@ def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
     }
 
 
-def _bioactivities(lfs) -> pl.LazyFrame:
+def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     return (
         # dfs["activity_properties"]
         # .join(dfs["activities"], on="activity_id", how="left")
@@ -118,12 +128,12 @@ def _bioactivities(lfs) -> pl.LazyFrame:
             lfs["assays"], on="assay_id", how="left", suffix="_assay"
         )  # doc_ids to this
         .join(lfs["assay_type"], on="assay_type", how="left", suffix="_assay_type")
-        .join(lfs, on="bao_format")
+        # .join(lfs, on="bao_format")
         # .join(dfs[])
     )
 
 
-def _components(lfs) -> pl.LazyFrame:
+def _components(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     return (
         lfs["component_sequences"]
         .join(
