@@ -31,6 +31,11 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
 
 [project.urls]
 Homepage = "https://github.com/lucinamay/fairfetched"

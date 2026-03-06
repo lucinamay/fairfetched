@@ -51,6 +51,11 @@ track = [
     { name = "rich" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'" },
@@ -64,6 +69,9 @@ requires-dist = [
     { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0.46" },
 ]
 provides-extras = ["track", "rdkit", "standardise", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "greenlet"
