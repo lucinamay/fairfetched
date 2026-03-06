@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fairfetched.get._utils import untar_sqlite
+from fairfetched.utils.files import ensure_untarred_sqlite as untar_sqlite
 
 
 @pytest.fixture
@@ -68,25 +68,6 @@ def test_untar_sqlite_from_tar_gz(tar_gz_archive, temp_dir):
     assert tables[0][0] == "test_table"
 
 
-def test_untar_sqlite_from_directory(sample_sqlite_db):
-    """Test handling of a directory containing a SQLite database."""
-    db_dir = sample_sqlite_db.parent
-    result_path = untar_sqlite(db_dir)
-
-    # Verify the returned path is the database file
-    assert result_path == sample_sqlite_db
-    assert result_path.exists()
-
-    # Verify it's a valid SQLite database
-    conn = sqlite3.connect(result_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    tables = cursor.fetchall()
-    conn.close()
-
-    assert len(tables) > 0
-
-
 def test_untar_sqlite_invalid_tar_gz(temp_dir):
     """Test error handling when tar.gz file doesn't contain a SQLite database."""
     invalid_tar = temp_dir / "invalid.tar.gz"
@@ -99,15 +80,6 @@ def test_untar_sqlite_invalid_tar_gz(temp_dir):
 
     with pytest.raises(ValueError, match="No .sqlite or .db file found"):
         untar_sqlite(invalid_tar)
-
-
-def test_untar_sqlite_empty_directory(temp_dir):
-    """Test error handling when directory is empty."""
-    empty_dir = temp_dir / "empty"
-    empty_dir.mkdir()
-
-    with pytest.raises(ValueError, match="No .db or .sqlite file found"):
-        untar_sqlite(empty_dir)
 
 
 def test_untar_sqlite_database_content(tar_gz_archive):

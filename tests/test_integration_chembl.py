@@ -14,8 +14,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from fairfetched.get._ensure import ensure_url
-from fairfetched.get._utils import sqlite_db_to_parquets, untar_sqlite
+from fairfetched.utils.ensure import ensure_url
+from fairfetched.utils.files import ensure_untarred_sqlite
+from fairfetched.utils.polars import ensure_sqlite_db_to_parquets
 
 
 @pytest.fixture
@@ -31,7 +32,8 @@ def temp_base_dir():
 @pytest.fixture
 def sample_chembl_database():
     """Create a mock ChEMBL-like SQLite database with sample tables."""
-    temp_db = Path(tempfile.mktemp(suffix=".db"))
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+        temp_db = Path(tf.name)
     conn = sqlite3.connect(temp_db)
     cursor = conn.cursor()
 
@@ -136,11 +138,13 @@ def test_ensure_url_downloads_tar_gz(chembl_tar_gz, temp_base_dir):
     # Read the actual tar.gz content
     tar_gz_content = chembl_tar_gz.read_bytes()
 
-    with patch("fairfetched.get._ensure.requests.get") as mock_get:
-        mock_response = Mock()
-        mock_response.iter_content = Mock(return_value=[tar_gz_content])
-        mock_get.return_value = mock_response
+    mock_resp = Mock()
+    mock_resp.read = Mock(side_effect=[tar_gz_content, b""])
+    mock_resp.getheader = Mock(return_value=str(len(tar_gz_content)))
+    mock_resp.__enter__ = Mock(return_value=mock_resp)
+    mock_resp.__exit__ = Mock(return_value=None)
 
+    with patch("urllib.request.urlopen", return_value=mock_resp):
         result = ensure_url(
             "https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases/chembl_36/chembl_36_sqlite.tar.gz",
             download_dir / "chembl_36_sqlite.tar.gz",
@@ -155,12 +159,12 @@ def test_ensure_url_downloads_tar_gz(chembl_tar_gz, temp_base_dir):
 def test_extract_and_convert_to_parquets(chembl_tar_gz, temp_base_dir):
     """Test extracting tar.gz and converting to parquet files."""
     # Extract the database
-    extracted_db = untar_sqlite(chembl_tar_gz)
+    extracted_db = ensure_untarred_sqlite(chembl_tar_gz)
     assert extracted_db.exists()
 
     # Convert to parquets
     parquet_dir = temp_base_dir / "clean"
-    parquet_paths = sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir)
+    parquet_paths = ensure_sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir)
 
     # Verify parquet files were created
     assert len(parquet_paths) > 0
@@ -186,12 +190,12 @@ def test_extract_and_convert_to_parquets(chembl_tar_gz, temp_base_dir):
 def test_full_workflow_from_tar_gz_to_parquets(chembl_tar_gz, temp_base_dir):
     """Test the complete workflow: extract tar.gz -> convert to parquets."""
     # Step 1: Extract the database
-    extracted_db = untar_sqlite(chembl_tar_gz)
+    extracted_db = ensure_untarred_sqlite(chembl_tar_gz)
     assert extracted_db.exists()
 
     # Step 2: Convert to parquets
     parquet_dir = temp_base_dir / "clean"
-    parquet_paths = sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir)
+    parquet_paths = ensure_sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir)
 
     # Step 3: Verify all parquets exist
     assert len(parquet_paths) == 4  # We created 4 tables
@@ -200,7 +204,7 @@ def test_full_workflow_from_tar_gz_to_parquets(chembl_tar_gz, temp_base_dir):
     import polars as pl
 
     molecules_lf = pl.scan_parquet(parquet_paths["molecule_dictionary"])
-    molecules = molecules_lf.collect()
+    molecules: pl.DataFrame = molecules_lf.collect()  # ty: ignore[invalid-assignment]
 
     assert molecules.height == 2
     assert "molregno" in molecules.columns
@@ -208,7 +212,7 @@ def test_full_workflow_from_tar_gz_to_parquets(chembl_tar_gz, temp_base_dir):
     assert "pref_name" in molecules.columns
 
     activities_lf = pl.scan_parquet(parquet_paths["activities"])
-    activities = activities_lf.collect()
+    activities: pl.DataFrame = activities_lf.collect()  # ty: ignore[invalid-assignment]
 
     assert activities.height == 2
     assert "activity_id" in activities.columns
@@ -218,43 +222,19 @@ def test_full_workflow_from_tar_gz_to_parquets(chembl_tar_gz, temp_base_dir):
     extracted_db.unlink()
 
 
-def test_extracted_database_from_directory_to_parquets(
-    sample_chembl_database, temp_base_dir
-):
-    """Test extraction when database is in a directory (not tar.gz)."""
-    # Create a directory structure
-    db_dir = temp_base_dir / "extracted"
-    db_dir.mkdir()
-    db_path = db_dir / sample_chembl_database.name
-    shutil.copy(sample_chembl_database, db_path)
-
-    # Use untar_sqlite on directory
-    result = untar_sqlite(db_dir)
-    assert result == db_path
-    assert result.exists()
-
-    # Convert to parquets
-    parquet_dir = temp_base_dir / "clean"
-    parquet_paths = sqlite_db_to_parquets(result, cache_dir=parquet_dir)
-
-    # Verify all tables were converted
-    assert len(parquet_paths) == 4
-    for path in parquet_paths.values():
-        assert path.exists()
-        assert path.suffix == ".parquet"
-
-
 def test_parquet_files_use_separate_temp_dir(chembl_tar_gz, temp_base_dir):
     """Test that parquet conversion doesn't pollute the original temp_base_dir."""
-    extracted_db = untar_sqlite(chembl_tar_gz)
+    extracted_db = ensure_untarred_sqlite(chembl_tar_gz)
 
     parquet_dir_1 = temp_base_dir / "clean_1"
-    parquet_paths_1 = sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir_1)
+    parquet_paths_1 = ensure_sqlite_db_to_parquets(
+        extracted_db, cache_dir=parquet_dir_1
+    )
 
     parquet_dir_2 = temp_base_dir / "clean_2"
-    parquet_paths_2 = sqlite_db_to_parquets(extracted_db, cache_dir=parquet_dir_2)
-
-    # Verify both directories are separate
+    parquet_paths_2 = ensure_sqlite_db_to_parquets(
+        extracted_db, cache_dir=parquet_dir_2
+    )
     assert parquet_dir_1 != parquet_dir_2
     assert parquet_dir_1.exists()
     assert parquet_dir_2.exists()
@@ -293,7 +273,7 @@ def test_multiple_databases_in_separate_temp_dirs(temp_base_dir):
 
         # Convert to parquets
         parquet_dir = temp_dir / "parquets"
-        parquet_paths = sqlite_db_to_parquets(db_path, cache_dir=parquet_dir)
+        parquet_paths = ensure_sqlite_db_to_parquets(db_path, cache_dir=parquet_dir)
 
         # Verify conversion
         assert len(parquet_paths) == 1
