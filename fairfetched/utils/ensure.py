@@ -7,8 +7,10 @@ from pathlib import Path
 from ._track import track
 
 
-def ensure_url(url: str, path: Path, force: bool = False) -> Path:
+def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
     """Downloads url to path if not already existing. Makes path dirs if not existing"""
+    if isinstance(path, str):
+        path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists() and not force:
