@@ -34,6 +34,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "chembl-structure-pipeline" },
     { name = "papyrus-structure-pipeline" },
     { name = "pytest" },
     { name = "rdkit" },
@@ -44,6 +45,7 @@ rdkit = [
     { name = "rdkit" },
 ]
 standardise = [
+    { name = "chembl-structure-pipeline" },
     { name = "papyrus-structure-pipeline" },
     { name = "rdkit" },
 ]
@@ -55,10 +57,13 @@ track = [
 dev = [
     { name = "fairfetched" },
     { name = "pytest" },
+    { name = "rich" },
+    { name = "rust-just" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "chembl-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=1.2.4" },
     { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", virtual = "." },
     { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'", virtual = "." },
     { name = "papyrus-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=0.0.5" },
@@ -75,6 +80,8 @@ provides-extras = ["track", "rdkit", "standardise", "dev"]
 dev = [
     { name = "fairfetched", virtual = "." },
     { name = "pytest", specifier = ">=9.0.2" },
+    { name = "rich", specifier = ">=14.3.3" },
+    { name = "rust-just", specifier = ">=1.46.0" },
 ]
 
 [[package]]
