@@ -66,6 +66,10 @@ class _Base:
 class Chembl(_Base):
     module: ModuleType = chembl
 
+    @staticmethod
+    def get_available_versions():
+        return chembl.available_versions()
+
     @cached_property
     def activity(self) -> LazyFrame:
         return self.compose()["bioactivity"]
@@ -109,9 +113,19 @@ class Chembl(_Base):
 class Papyrus(_Base):
     module: ModuleType = papyrus
 
+    @staticmethod
+    def get_available_versions():
+        return papyrus.available_versions()
+
     @property
     def proteins(self) -> LazyFrame:
         return self.compose()["proteins"]
+
+    @property
+    def full_data(self) -> LazyFrame:
+        """all data (bioactivity + protein data),
+        composed into one flat tabular format LazyFrame"""
+        return self.compose()["full"]
 
     @classmethod
     def from_version(

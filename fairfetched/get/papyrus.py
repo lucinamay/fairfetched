@@ -125,13 +125,7 @@ def clean(consolidated_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
 def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
     """Join/combine lazy frames, returning dict"""
     return {
-        "bioactivity": lfs["bioactivity"].join(
-            lfs["protein"],
-            on="target_id",
-            how="left",
-            maintain_order="left",
-            validate="m:1",  # one unique protein only from right, can reoccur within compounds.
-        ),
+        "bioactivity": lfs["bioactivity"],
         "compounds": lfs["bioactivity"]
         .drop(
             "activity_id",
