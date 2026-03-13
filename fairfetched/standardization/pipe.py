@@ -1,8 +1,6 @@
 import logging as lg
 import os
-import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from functools import lru_cache
 from multiprocessing import Pool
 from typing import Any, Callable, Iterable, Literal
 
@@ -10,15 +8,18 @@ import polars as pl
 from rdkit.Chem import Mol
 
 from fairfetched.utils._track import track
+from fairfetched.utils.polars import apply_to_unique
 
 from .compound_fns import (
-    _aeffect_standardise_mol,
+    _remove_stereo_papyrus_standardise_check_inchi,
     _safe_inchi_to_mol,
     inchi_to_inchikey,
     mols_to_inchikeys,
     mols_to_inchis,
     mols_to_inchis_and_auxinfo,
     mols_to_kekulised_smiles,
+    smiles_to_clean_mols,
+    standardised_nostereo_to_smiles_inchi_aux_inchikey,
 )
 
 
@@ -74,6 +75,45 @@ def apply_to_unique_strings(
     )
 
 
+def with_cleaned_mol_descriptors_struct(
+    lf: pl.LazyFrame,
+    descriptor_to_descriptors_func: Callable[[str], tuple[str | None, ...]],
+    from_col: str,
+    to_col: str,
+    **kwargs,
+) -> pl.LazyFrame:
+    return lf.pipe(
+        apply_to_unique,
+        descriptor_to_descriptors_func,
+        from_col=from_col,
+        to_col=to_col,
+        **kwargs,
+    )
+
+
+def with_cleaned_mol_descriptors(
+    lf: pl.LazyFrame,
+    smiles_col: str = "smiles",
+    **kwargs,
+) -> pl.LazyFrame:
+    """cleans and standardises mols"""
+    fields = ["smiles", "inchi", "inchi_auxinfo", "inchikey"]
+    to_col = "descriptors_struct"
+    lf = lf.pipe(
+        with_cleaned_mol_descriptors_struct,
+        descriptor_to_descriptors_func=standardised_nostereo_to_smiles_inchi_aux_inchikey,
+        from_col=smiles_col,
+        to_col=to_col,
+        **kwargs,
+    )
+    lf = (
+        lf.cast({to_col: pl.Struct({k: pl.Utf8 for k in fields})})
+        .rename({k: f"{k}_original" for k in fields if k in lf.collect_schema()})
+        .with_columns(pl.col(to_col).struct.unnest())
+        .drop(to_col)
+    )
+
+
 def with_mols_from_inchi_pool(
     lf: pl.LazyFrame, alias="mol", parallel=True
 ) -> pl.LazyFrame:
@@ -113,31 +153,47 @@ def with_mols_from_inchi_pool(
 
 
 def with_mols_from_inchi_thread(
-    lf: pl.LazyFrame, alias="mol", parallel=True
+    lf: pl.LazyFrame,
+    alias="mol",
+    parallel=True,
+    join=True,
 ) -> pl.LazyFrame:
     """
     Returns a new DataFrame with a column of RDKit Mol objects from InChI strings.
     """
     if parallel:
-        unique_inchis = (
-            lf.select(pl.col("inchi")).unique().collect().get_column("inchi")  # ty: ignore[unresolved-attribute]
-        )
-        with ThreadPoolExecutor(
-            max_workers=round((os.cpu_count() or 1) * 0.9)
-        ) as executor:
-            res = list(executor.map(_safe_inchi_to_mol, unique_inchis))
-        mols_df = pl.DataFrame(
-            [
-                pl.Series(unique_inchis, dtype=pl.Utf8).alias("inchi"),
-                pl.Series(res, dtype=pl.Object).alias(alias),
-            ]
-        )
-        return lf.join(
-            mols_df.lazy(),
-            on="inchi",
-            how="left",
-            maintain_order="left",
-        )
+        if join:
+            inchis = (
+                lf.select(pl.col("inchi")).unique().collect().get_column("inchi")  # ty: ignore[unresolved-attribute]
+            )
+        else:
+            lf = lf.sort("inchi")
+            inchis = lf.select("inchi").collect().get_column("inchi")
+        workers = round((os.cpu_count() or 1) * 0.9)
+        chunksize = max(1, len(inchis) // (workers * 4))
+        print("n_workers=", workers)
+        print("chunksize=", chunksize)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            res = list(
+                executor.map(
+                    _safe_inchi_to_mol,
+                    track(inchis, total=len(inchis), desc="loading mols"),
+                    chunksize=chunksize,
+                )
+            )
+            mol_series = pl.Series(res, dtype=pl.Object).alias(alias)
+        if join:
+            mols_df = pl.DataFrame(
+                [pl.Series(inchis, dtype=pl.Utf8).alias("inchi"), mol_series]
+            )
+            return lf.join(
+                mols_df.lazy(),
+                on="inchi",
+                how="left",
+                maintain_order="left",
+            )
+        else:
+            lf.with_columns(mol_series)
     return lf.join(
         lf.select(pl.col("inchi"))
         .unique()
@@ -156,7 +212,9 @@ def with_clean_mols_from_smiles(df: pl.LazyFrame, alias="mol") -> pl.LazyFrame:
     return df.with_columns(
         pl.col("smiles")
         .map_elements(
-            _aeffect_standardise_mol, return_dtype=pl.Object, strategy="threading"
+            _remove_stereo_papyrus_standardise_check_inchi,
+            return_dtype=pl.Object,
+            strategy="threading",
         )
         .alias("mol")
     )
@@ -164,7 +222,7 @@ def with_clean_mols_from_smiles(df: pl.LazyFrame, alias="mol") -> pl.LazyFrame:
 
 def _smiles_and_cleaned_mols_df(smiles: Iterable[str]) -> pl.DataFrame:
     with Pool() as p:
-        res = p.map(_aeffect_standardise_mol, smiles)
+        res = p.map(_remove_stereo_papyrus_standardise_check_inchi, smiles)
     return pl.DataFrame(
         [
             pl.Series(smiles, dtype=pl.Utf8).alias("smiles"),
