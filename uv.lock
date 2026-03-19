@@ -57,7 +57,6 @@ track = [
 dev = [
     { name = "fairfetched" },
     { name = "pytest" },
-    { name = "rich" },
     { name = "rust-just" },
 ]
 
@@ -80,7 +79,6 @@ provides-extras = ["track", "rdkit", "standardise", "dev"]
 dev = [
     { name = "fairfetched", virtual = "." },
     { name = "pytest", specifier = ">=9.0.2" },
-    { name = "rich", specifier = ">=14.3.3" },
     { name = "rust-just", specifier = ">=1.46.0" },
 ]
 
