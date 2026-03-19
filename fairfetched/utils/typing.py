@@ -10,7 +10,9 @@ class ComposedLFDict(TypedDict):
 
     bioactivity: LazyFrame
     compounds: LazyFrame
+    bioactivity_nostereochemistry: NotRequired[LazyFrame]
     full: NotRequired[LazyFrame]
+    full_nostereochemistry: NotRequired[LazyFrame]
     proteins: NotRequired[LazyFrame]
     components: NotRequired[LazyFrame]
 

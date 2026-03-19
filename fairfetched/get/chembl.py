@@ -22,7 +22,7 @@ def _version_formatter(version: int | float | str) -> str:
     if not isinstance(version, str):
         try:
             version = str(version)
-        finally:
+        except Exception:
             raise TypeError(f"invalid version type: {type(version)}")
 
     version = version.lstrip("0")
@@ -63,7 +63,7 @@ def ensure_raw(version: str, raw_dir: Path | str | None = None) -> dict[str, Pat
         raw_dir = CHEMBL_DIR / version
     raw_dir = Path(raw_dir)
     return {
-        name: ensure_url(url=url, path=raw_dir / f"{file_suffix_from_url(url)}")
+        name: ensure_url(url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}")
         for name, url in get_sources(version).items()
     }
 

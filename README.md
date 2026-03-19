@@ -20,7 +20,10 @@ or if you do not use the uv package manager:
   - [x] database to tables
   - [ ] intuitive pre-merged flat files
   - [ ] database visualisation 
-- [ ] reproducible chembl and papyrus standardisation
+- [ ] reproducion from downloaded raw file 
+- [ ] reproducible molecular (and protein?) standardisation
 - [ ] automated time-url logging and manifest files
-- [ ] minimisation of dependencies
-- [ ] support for other databases
+- [ ] well-organised logging
+- [ ] dependency minimisation
+- [ ] other database support
+- [ ] preservation of api and parsing logic per major version

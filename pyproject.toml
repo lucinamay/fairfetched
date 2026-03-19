@@ -15,6 +15,7 @@ rdkit = [
 ]
 standardise = [
     "fairfetched[rdkit]",
+    "chembl-structure-pipeline>=1.2.4",
     "papyrus-structure-pipeline>=0.0.5",
 ]
 dev = [
@@ -34,6 +35,7 @@ where = ["."]
 [tool.uv.workspace]
 members = [
     ".",
+    ".",
 ]
 
 [tool.uv.sources]
@@ -43,6 +45,7 @@ fairfetched = { workspace = true, editable = true }
 dev = [
     "fairfetched",
     "pytest>=9.0.2",
+    "rust-just>=1.46.0",
 ]
 
 
