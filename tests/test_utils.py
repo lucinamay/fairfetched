@@ -78,7 +78,7 @@ def test_untar_sqlite_invalid_tar_gz(temp_dir):
         text_file.write_text("This is not a database")
         tar.add(text_file, arcname="test.txt")
 
-    with pytest.raises(ValueError, match="No .sqlite or .db file found"):
+    with pytest.raises(ValueError, match="No .db file found in archive"):
         untar_sqlite(invalid_tar)
 
 

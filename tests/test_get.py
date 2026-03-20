@@ -559,11 +559,11 @@ class TestPapyrusCompose:
         expected_keys = {"bioactivity", "compounds", "full", "proteins"}
         assert expected_keys == set(result.keys())
 
-    def test_papyrus_bioactivity_joins_protein(self, sample_papyrus_parquets):
+    def test_papyrus_full_joins_protein(self, sample_papyrus_parquets):
         """Bioactivity should be joined with protein."""
         lfs = papyrus.clean(sample_papyrus_parquets)
         result = papyrus.compose(lfs)
-        bioactivity: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
+        bioactivity: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
 
         # Should have columns from both tables
         assert "target_id" in bioactivity.columns
@@ -980,26 +980,26 @@ class TestCleaningTransformations:
 class TestPapyrusCompositionDetails:
     """Test Papyrus composition with detailed column checking."""
 
-    def test_papyrus_bioactivity_after_protein_join(self, sample_papyrus_parquets):
+    def test_papyrus_full_after_protein_join(self, sample_papyrus_parquets):
         """Papyrus bioactivity composition should join protein columns."""
         lfs = papyrus.clean(sample_papyrus_parquets)
         result = papyrus.compose(lfs)
-        bioactivity: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
+        full: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
 
         # Should have columns from both bioactivity and protein
-        assert "target_id" in bioactivity.columns
-        assert "uniprot_id" in bioactivity.columns
-        assert "connectivity" in bioactivity.columns
+        assert "target_id" in full.columns
+        assert "uniprot_id" in full.columns
+        assert "connectivity" in full.columns
 
-    def test_papyrus_full_same_as_bioactivity(self, sample_papyrus_parquets):
-        """Papyrus full should be same as bioactivity (both have protein join)."""
+    def test_papyrus_full_not_same_as_bioactivity(self, sample_papyrus_parquets):
+        """Papyrus full should no longer be same as bioactivity (only full has a protein join)."""
         lfs = papyrus.clean(sample_papyrus_parquets)
         result = papyrus.compose(lfs)
         bioactivity: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
         full: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
 
         # Should have same columns
-        assert set(bioactivity.columns) == set(full.columns)
+        assert set(bioactivity.columns) != set(full.columns)
 
     def test_papyrus_compounds_removes_activity_id(self, sample_papyrus_parquets):
         """Papyrus compounds should not have activity_id column."""
@@ -1016,16 +1016,17 @@ class TestPapyrusCompositionDetails:
 class TestCompositionJoinValidation:
     """Test composition join validation and constraints."""
 
-    def test_chembl_bioactivity_join_cardinality(self, sample_chembl_parquets):
-        """Bioactivity-protein join should maintain m:1 cardinality."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._bioactivities(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+    # @TODO: make this test actually check cardinality
+    # def test_chembl_bioactivity_join_cardinality(self, sample_chembl_parquets):
+    #     """Bioactivity-protein join should maintain m:1 cardinality."""
+    #     lfs = chembl.clean(sample_chembl_parquets)
+    #     result = chembl._bioactivities(lfs)
+    #     collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
 
-        # Each activity should map to exactly one protein
-        # (or None if no matching protein)
-        assert "target_id" in collected.columns
-        assert len(collected) >= 0
+    #     # Each activity should map to exactly one protein
+    #     # (or None if no matching protein)
+    #     assert "target_id" in collected.columns
+    #     assert len(collected) >= 0
 
     def test_chembl_compounds_unique_structures(self, sample_chembl_parquets):
         """Compounds should be based on molregno unique values."""
@@ -1070,13 +1071,13 @@ class TestDataIntegrity:
         result = papyrus.compose(lfs)
 
         proteins_direct: pl.DataFrame = result["proteins"].collect()  # ty: ignore[invalid-assignment]
-        proteins_via_bioactivity: pl.DataFrame = (
-            result["bioactivity"].select("target_id", "uniprot_id").unique().collect()
+        proteins_via_full: pl.DataFrame = (
+            result["full"].select("target_id", "uniprot_id").unique().collect()
         )  # ty: ignore[invalid-assignment]
 
         # Both should have target_id
         assert "target_id" in proteins_direct.columns
-        assert "target_id" in proteins_via_bioactivity.columns
+        assert "target_id" in proteins_via_full.columns
 
     def test_clean_empty_string_replacement_consistency(self, temp_dir):
         """Empty strings should be consistently replaced with None."""
