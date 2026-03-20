@@ -26,7 +26,7 @@ wheels = [
 
 [[package]]
 name = "fairfetched"
-version = "0.0.1.post20260306"
+version = "0.0.1.post20260320"
 source = { virtual = "." }
 dependencies = [
     { name = "polars" },
