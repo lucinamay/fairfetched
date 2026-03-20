@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import polars as pl
 
@@ -19,6 +19,8 @@ CHEMBL_DIR = BASE_DIR / "chembl"
 def _version_formatter(version: int | float | str) -> str:
     if isinstance(version, int | float):
         version = str(version)
+    if isinstance(version, Sequence) and not isinstance(version, str):
+        raise TypeError(f"invalid version type: {type(version)}")
     if not isinstance(version, str):
         try:
             version = str(version)
