@@ -17,7 +17,7 @@ or if you do not use the uv package manager:
   - [ ] all-version support
   - [ ] built-in pivots
 - [ ] chembl database support
-  - [x] database to tables
+  - [x] database to tables (parquet)
   - [ ] intuitive pre-merged flat files
   - [ ] database visualisation 
 - [ ] reproducion from downloaded raw file 
