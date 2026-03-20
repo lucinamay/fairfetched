@@ -40,7 +40,6 @@ mychembl = Chembl.from_latest() # this downloads Chembl raw files + extracts par
 
 mychembl.lfs                  # a dictionary of all chembl files in polars LazyFrame format, scanned directly from the extracted .parquet files
 
-mychembl.lfs["activities"].filter(
 
 mychembl.consolidated_paths   # the paths to the parquet-converted tabular data files in the Chembl .db file
 
