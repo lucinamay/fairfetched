@@ -1,24 +1,24 @@
-import logging as lg
 import os
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from multiprocessing import Pool
-from typing import Any, Callable, Iterable, Literal
+from typing import Callable, Iterable, Literal
 
 import polars as pl
 from rdkit.Chem import Mol
 
 from fairfetched.utils._track import track
-from fairfetched.utils.polars import apply_to_unique
+from fairfetched.utils.polars import apply_to_unique, map_batches_pooled
 
 from .compound_fns import (
     _remove_stereo_papyrus_standardise_check_inchi,
     _safe_inchi_to_mol,
+    _safe_smiles_to_mol,
     inchi_to_inchikey,
     mols_to_inchikeys,
     mols_to_inchis,
     mols_to_inchis_and_auxinfo,
     mols_to_kekulised_smiles,
-    smiles_to_clean_mols,
     standardised_nostereo_to_smiles_inchi_aux_inchikey,
 )
 
@@ -80,14 +80,17 @@ def with_cleaned_mol_descriptors_struct(
     descriptor_to_descriptors_func: Callable[[str], tuple[str | None, ...]],
     from_col: str,
     to_col: str,
+    return_dtype: pl.DataTypeExpr,
+    parallel=True,
     **kwargs,
 ) -> pl.LazyFrame:
     return lf.pipe(
-        apply_to_unique,
+        apply_to_unique,  # creates unique list, iterates over pooled,
         descriptor_to_descriptors_func,
         from_col=from_col,
         to_col=to_col,
-        **kwargs,
+        return_dtype=return_dtype,
+        parallel=True,
     )
 
 
@@ -96,7 +99,12 @@ def with_cleaned_mol_descriptors(
     smiles_col: str = "smiles",
     **kwargs,
 ) -> pl.LazyFrame:
-    """cleans and standardises mols"""
+    """cleans and standardises mols by:
+    1) removing stereochemistry
+    2) running papyrus standardisation
+    3) validating inchis
+    returns None if invalid, but does not drop
+    """
     fields = ["smiles", "inchi", "inchi_auxinfo", "inchikey"]
     to_col = "descriptors_struct"
     lf = lf.pipe(
@@ -104,13 +112,46 @@ def with_cleaned_mol_descriptors(
         descriptor_to_descriptors_func=standardised_nostereo_to_smiles_inchi_aux_inchikey,
         from_col=smiles_col,
         to_col=to_col,
+        return_dtype=pl.Struct(
+            {k: pl.Utf8 for k in ["smiles", "inchi", "inchi_auxinfo", "inchikey"]}
+        ),
         **kwargs,
     )
-    lf = (
+    return (
         lf.cast({to_col: pl.Struct({k: pl.Utf8 for k in fields})})
         .rename({k: f"{k}_original" for k in fields if k in lf.collect_schema()})
         .with_columns(pl.col(to_col).struct.unnest())
         .drop(to_col)
+    )
+
+
+def with_mols_from_inchi_batched(lf, alias="mol", parallel=False):
+    function = partial(
+        map_batches_pooled,
+        fn=_safe_inchi_to_mol,
+        return_dtype=pl.Object,
+        parallel=parallel,
+        desc="loading mols",  # used only if parallel => tracks progress
+    )
+    return lf.with_columns(
+        pl.col("inchi")
+        .map_batches(function, return_dtype=pl.Object, is_elementwise=not parallel)
+        .alias(alias)
+    )
+
+
+def with_mols_from_smiles_batched(lf, alias="mol", parallel=False):
+    function = partial(
+        map_batches_pooled,
+        fn=_safe_smiles_to_mol,
+        return_dtype=pl.Object,
+        parallel=parallel,
+        desc="loading mols",  # used only if parallel => tracks progress
+    )
+    return lf.with_columns(
+        pl.col("smiles")
+        .map_batches(function, return_dtype=pl.Object, is_elementwise=not parallel)
+        .alias(alias)
     )
 
 
@@ -168,12 +209,13 @@ def with_mols_from_inchi_thread(
             )
         else:
             lf = lf.sort("inchi")
-            inchis = lf.select("inchi").collect().get_column("inchi")
+            inchis = lf.select("inchi").collect().get_column("inchi")  # ty: ignore[unresolved-attribute]
+            inchis = lf.select("inchi").collect().get_column("inchi")  # ty: ignore[unresolved-attribute]
         workers = round((os.cpu_count() or 1) * 0.9)
         chunksize = max(1, len(inchis) // (workers * 4))
         print("n_workers=", workers)
         print("chunksize=", chunksize)
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
             res = list(
                 executor.map(
                     _safe_inchi_to_mol,
