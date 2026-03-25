@@ -22,6 +22,10 @@ from .compound_fns import (
     standardised_nostereo_to_smiles_inchi_aux_inchikey,
 )
 
+lg.warning(
+    "warning: pipe might change soon, preferrably use the mol_expr and its syntax instead"
+)
+
 
 def apply_to_unique_strings(
     lf: pl.LazyFrame,
