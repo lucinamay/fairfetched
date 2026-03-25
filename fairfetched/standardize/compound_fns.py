@@ -10,9 +10,9 @@ which is part of the datasets.py module
 
 import logging as lg
 import re
-from functools import lru_cache
+from functools import reduce
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from rdkit.Chem import (
     Kekulize,
@@ -31,6 +31,10 @@ from fairfetched.utils._track import track
 
 from ._optional import _papyrus_standardize
 
+lg.warning(
+    "warning: compound_fns will be deprecated soon, please use the mol_functions and its syntax instead"
+)
+
 # Dedicated logger for _smiles_to_clean_mol
 mlg = lg.getLogger("fairfetched.standardization.compound_fns")
 if not mlg.hasHandlers():
@@ -41,7 +45,7 @@ if not mlg.hasHandlers():
 mlg.setLevel(lg.DEBUG)
 
 
-def _aeffect_standardise_mol(smiles: str) -> Mol | None:
+def _remove_stereo_papyrus_standardise_check_inchi(smiles: str) -> Mol | None:
     """Returns cleaned molecules from SMILES string or None upon failure or invalid molecules"""
     assert isinstance(smiles, str)
     if not smiles:
@@ -90,6 +94,66 @@ def _aeffect_standardise_mol(smiles: str) -> Mol | None:
     return None
 
 
+def fuse_pipeline(
+    *fns: Callable[[Mol | str | None], Mol | tuple[str | None, ...] | None],
+) -> Callable[[Mol | str | None], Mol | tuple[str | None, ...] | None]:
+    """Combines functions on mols into one function. Technically made for mol-to-mol|None functions,
+    but could be started and finished with Any->Mol and Mol->Any functions, respectively
+
+    Example usage:
+        ```
+        standardise = _fuse_pipeline(remove_stereochemistry,validate_inchi,standardise_papyrus)
+        ```
+    """
+    return reduce(lambda f, g: lambda m: (r := f(m)) and g(r), tuple(fns))
+
+
+def _safe_mol_to_kekulized_smiles(mol) -> str | None:
+    try:
+        return MolToSmiles(mol, kekuleSmiles=True, isomericSmiles=False)
+    except Exception as e:
+        mlg.error(e)
+
+
+def _safe_mol_to_inchi_auxinfo_inchikey(
+    mol,
+) -> tuple[str | None, str | None, str | None]:
+    try:
+        inchi, auxinfo = MolToInchiAndAuxInfo(mol)
+        return inchi, auxinfo, InchiToInchiKey(inchi)
+    except Exception as e:
+        mlg.error(e)
+        return None, None, None
+
+
+def _mol_to_smiles_inchi_aux_inchikey(
+    mol: Mol | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    if not mol:
+        return None, None, None, None
+    return (
+        _safe_mol_to_kekulized_smiles(mol),
+        *_safe_mol_to_inchi_auxinfo_inchikey(mol),
+    )
+
+
+# standardised_nostereo_to_smiles_inchi_aux_inchikey = cast(
+#     Callable[[str], ,
+#     fuse_pipeline(
+#         _remove_stereo_papyrus_standardise_check_inchi,
+#         _mol_to_smiles_inchi_aux_inchikey,
+#     ),
+# )
+
+
+def standardised_nostereo_to_smiles_inchi_aux_inchikey(
+    str,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    return _mol_to_smiles_inchi_aux_inchikey(
+        _remove_stereo_papyrus_standardise_check_inchi(str)
+    )
+
+
 def _safe_inchi_to_mol(inchi: str) -> Mol | None:
     try:
         return MolFromInchi(inchi)
@@ -116,7 +180,10 @@ def inchis_to_mols(
 
 
 def smiles_to_clean_mols(smiles: Iterable[str]) -> list[Mol | None]:
-    return [_aeffect_standardise_mol(s) for s in track(smiles, desc="cleaning smiles")]
+    return [
+        _remove_stereo_papyrus_standardise_check_inchi(s)
+        for s in track(smiles, desc="cleaning smiles")
+    ]
 
 
 def _mol_to_kekulised_smiles(mol: Mol) -> str:

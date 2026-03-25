@@ -1,6 +1,6 @@
 [project]
 name = "fairfetched"
-version = "0.0.1-20260320"
+version = "0.0.1-20260325"
 description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,8 +43,11 @@ fairfetched = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [
+    "chembl-structure-pipeline>=1.2.4",
     "fairfetched",
+    "papyrus-structure-pipeline>=0.0.5",
     "pytest>=9.0.2",
+    "rdkit>=2025.9.6",
     "rust-just>=1.46.0",
 ]
 
