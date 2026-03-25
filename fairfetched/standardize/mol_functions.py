@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import logging
-from functools import wraps
-from typing import Callable, ParamSpec, TypeVar
+from dataclasses import asdict, dataclass, fields
+from functools import cached_property, wraps
+from typing import Any, Callable, Literal, ParamSpec, TypedDict, TypeVar, get_type_hints
 
 # from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
 from rdkit import Chem
-from rdkit.Chem import Mol, MolFromInchi, MolToInchi, RemoveStereochemistry
+from rdkit.Chem import (
+    InchiToInchiKey,
+    Mol,
+    MolFromInchi,
+    MolToInchi,
+    MolToInchiAndAuxInfo,
+    RemoveStereochemistry,
+)
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
@@ -139,6 +147,33 @@ def _binary_to_inchi_and_auxinfo(b: bytes | None) -> str | None:
 @safe_step
 def _binary_to_inchikey(b: bytes | None) -> str | None:
     return Chem.inchi.MolToInchiKey(Mol(b))
+
+
+@dataclass(frozen=True)
+class Descriptors:
+    inchi: str
+    inchi: str
+    inchi_auxinfo: str
+    inchikey: str
+    smiles: str
+
+    @classmethod
+    def dataclass_schema(cls) -> dict[str, type | str | Any]:
+        # hints = get_type_hints(cls)
+        return {f.name: str for f in fields(cls)}
+
+
+@safe_step
+def _binary_to_descriptors(b: bytes | None) -> Descriptors | None:
+    """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as 'smiles')"""
+    mol = Chem.Mol(b)
+    inchi, auxinfo = MolToInchiAndAuxInfo(mol)
+    return Descriptors(
+        inchi=inchi,
+        inchi_auxinfo=auxinfo,
+        inchikey=InchiToInchiKey(inchi),
+        smiles=MolToSmiles(mol, kekuleSmiles=True, isomericSmiles=False),
+    )
 
 
 @safe_step

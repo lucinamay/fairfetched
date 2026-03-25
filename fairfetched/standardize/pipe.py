@@ -8,6 +8,15 @@ from typing import Callable, Iterable, Literal
 import polars as pl
 from rdkit.Chem import Mol
 
+from fairfetched.get import Papyrus
+from fairfetched.standardize.mol_expr import MolExpr
+from fairfetched.standardize.mol_functions import (
+    Descriptors,
+    papyrus_standardise,
+    remove_stereo,
+    valid_inchi,
+)
+from fairfetched.standardize.pipeline import PIPELINE_PAPYRUS_NOSTEREO
 from fairfetched.utils._track import track
 from fairfetched.utils.polars import apply_to_unique, map_batches_pooled
 
@@ -100,6 +109,73 @@ def with_cleaned_mol_descriptors_struct(
 
 
 def with_cleaned_mol_descriptors(
+    lf: pl.LazyFrame,
+    from_col: str = "smiles",
+    parallel=True,
+    suffix: str = "_original",
+    **kwargs,
+) -> pl.LazyFrame:
+    rename = {k: f"{k}{suffix}" for k in Descriptors.dataclass_schema().keys()}
+
+    return (
+        lf.rename(rename, strict=False)
+        .with_columns(
+            MolExpr.from_smiles(
+                rename.get(from_col, from_col), parallel=parallel, dedup=True
+            )
+            .standardise(remove_stereo, valid_inchi)
+            .alias("mol")
+        )
+        .with_columns(
+            MolExpr.col("mol", parallel=parallel, dedup=True).to_descriptors()
+        )
+    )
+
+
+def with_cleaned_mol_descriptors_legacylike(
+    lf: pl.LazyFrame,
+    from_col: str = "smiles",
+    parallel=True,
+    descriptors: list[Literal["smiles", "inchikey", "inchi_auxinfo"]] = [
+        "smiles",
+        "inchikey",
+        "inchi_auxinfo",
+    ],
+    suffix: str = "_original",
+    **kwargs,
+) -> pl.LazyFrame:
+    expressions = {
+        "smiles": (
+            MolExpr.col("mol", parallel=parallel).to_kekulised_smiles().alias("smiles")
+        ),
+        "inchi_auxinfo": (
+            MolExpr.col("mol", parallel=parallel).to_inchi_and_auxinfo().struct.unnest()
+        ),
+        "inchikey": (
+            MolExpr.col("mol", parallel=parallel).to_inchikey().alias("inchikey")
+        ),
+    }
+    # rename = {k: f"{k}{suffix}" for k in descriptors}
+    if from_col in descriptors:
+        lf = lf.rename({from_col: f"{from_col}{suffix}"})
+        from_col = f"{from_col}{suffix}"
+    return lf.join(
+        lf.select(pl.col(from_col))
+        .unique()
+        .with_columns(
+            MolExpr.from_smiles(from_col, parallel=parallel)
+            .standardise(remove_stereo, valid_inchi)
+            .alias("mol")
+        )
+        .with_columns((v for k, v in expressions.items() if k in descriptors)),
+        on=from_col,
+        how="right",
+        maintain_order="left",
+        suffix=suffix,
+    )
+
+
+def with_cleaned_mol_descriptors_legacy(
     lf: pl.LazyFrame,
     smiles_col: str = "smiles",
     **kwargs,

@@ -3,14 +3,16 @@ import multiprocessing as mp
 import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from functools import partial
+from typing import Any
 
 # from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
 import polars as pl
-from rdkit import Chem
 
 from .mol_functions import (
+    Descriptors,
     MolFn,
+    _binary_to_descriptors,
     _binary_to_inchi,
     _binary_to_inchi_and_auxinfo,
     _binary_to_inchikey,
@@ -19,6 +21,7 @@ from .mol_functions import (
     _binary_to_smiles,
     _inchi_to_binary,
     _num_atoms,
+    _num_heavy_atoms,
     _smiles_to_binary,
 )
 from .pipeline import (
@@ -39,7 +42,7 @@ _CTX = mp.get_context("spawn")
 # --- pipeline builder ---
 
 
-def _map(
+def _map_nodedup(
     fn,
     series: pl.Series,
     return_dtype: pl.DataTypeExpr | pl.DataType | Any,
@@ -61,6 +64,23 @@ def _map(
     return pl.Series(series.name, tuple(map(fn, series)), dtype=return_dtype)
 
 
+def _map(
+    fn,
+    series: pl.Series,
+    return_dtype: pl.DataTypeExpr | pl.DataType | Any,
+    parallel: bool,
+    dedup: bool = False,
+) -> pl.Series:
+    if not dedup:
+        return _map_nodedup(fn, series, return_dtype, parallel=parallel)
+    unique = series.unique()
+    results = _map_nodedup(fn, unique, return_dtype, parallel=parallel)
+    mapping = pl.DataFrame({"k": unique, "v": results})
+    return (
+        series.to_frame("k").join(mapping, on="k", how="left")["v"].rename(series.name)
+    )
+
+
 @pl.api.register_expr_namespace("mol")
 class PlMolExpr:
     def __init__(self, expr: pl.Expr):
@@ -69,28 +89,28 @@ class PlMolExpr:
     def from_smiles(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
             # lambda s: _parallel_map(_smiles_to_binary, s, pl.Binary),
-            lambda s: _map(_smiles_to_binary, s, pl.Binary, parallel),
+            lambda s: _map_nodedup(_smiles_to_binary, s, pl.Binary, parallel),
             return_dtype=pl.Binary,
             is_elementwise=not parallel,
         )
 
     def from_inchi(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_inchi_to_binary, s, pl.Binary, parallel),
+            lambda s: _map_nodedup(_inchi_to_binary, s, pl.Binary, parallel),
             return_dtype=pl.Binary,
             is_elementwise=not parallel,
         )
 
     def to_smiles(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_binary_to_smiles, s, pl.String, parallel),
+            lambda s: _map_nodedup(_binary_to_smiles, s, pl.String, parallel),
             return_dtype=pl.String,
             is_elementwise=not parallel,
         )
 
     def to_inchi(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchi, s, pl.String, parallel),
+            lambda s: _map_nodedup(_binary_to_inchi, s, pl.String, parallel),
             return_dtype=pl.String,
             is_elementwise=not parallel,
         )
@@ -98,35 +118,35 @@ class PlMolExpr:
     def to_inchi_and_auxinfo(self, parallel: bool = False) -> pl.Expr:
         dtype = pl.Struct({"inchi": pl.String, "inchi_auxinfo": pl.String})
         return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchi_and_auxinfo, s, dtype, parallel),
+            lambda s: _map_nodedup(_binary_to_inchi_and_auxinfo, s, dtype, parallel),
             return_dtype=dtype,
             is_elementwise=not parallel,
         )
 
     def to_inchikey(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchikey, s, pl.String, parallel),
+            lambda s: _map_nodedup(_binary_to_inchikey, s, pl.String, parallel),
             return_dtype=pl.String,
             is_elementwise=not parallel,
         )
 
     def to_kekulised_smiles(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_binary_to_kekulized_smiles, s, pl.String, parallel),
+            lambda s: _map_nodedup(_binary_to_kekulized_smiles, s, pl.String, parallel),
             return_dtype=pl.String,
             is_elementwise=not parallel,
         )
 
     def num_atoms(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_num_atoms, s, pl.Int32, parallel),
+            lambda s: _map_nodedup(_num_atoms, s, pl.Int32, parallel),
             return_dtype=pl.Int32,
             is_elementwise=not parallel,
         )
 
     def num_heavy_atoms(self, parallel: bool = False) -> pl.Expr:
         return self._expr.map_batches(
-            lambda s: _map(_num_heavy_atoms, s, pl.Int32, parallel),
+            lambda s: _map_nodedup(_num_heavy_atoms, s, pl.Int32, parallel),
             return_dtype=pl.Int32,
             is_elementwise=not parallel,
         )
@@ -135,7 +155,7 @@ class PlMolExpr:
         """to a mol, apply standardisation steps (mol->mol | None)"""
         fn = mol_pipeline(*steps)
         return self._expr.map_batches(
-            lambda s: _map(fn, s, pl.Binary, parallel),
+            lambda s: _map_nodedup(fn, s, pl.Binary, parallel),
             return_dtype=pl.Binary,
             is_elementwise=not parallel,
         )
@@ -156,29 +176,64 @@ class MolExpr(pl.Expr):
         return self._expr._pyexpr
 
     @classmethod
-    def from_smiles(cls, col: str = "smiles", parallel: bool = False) -> "MolExpr":
+    def from_smiles(
+        cls, col: str = "smiles", parallel: bool = False, dedup: bool = False
+    ) -> "MolExpr":
         return cls(
             pl.col(col).map_batches(
-                lambda s: _map(_smiles_to_binary, s, pl.Binary, cls._parallel),
-                return_dtype=pl.Binary,
-                is_elementwise=not cls._parallel,
-            )
-        )
-
-    @classmethod
-    def from_inchi(cls, col: str = "inchi", parallel: bool = False) -> "MolExpr":
-        return cls(
-            pl.col(col).map_batches(
-                lambda s: _map(_inchi_to_binary, s, pl.Binary, parallel),
+                lambda s: _map(_smiles_to_binary, s, pl.Binary, parallel, dedup),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
             )
         )
 
     @classmethod
-    def from_col(cls, col: str, parallel: bool = False) -> "MolExpr":
+    def from_inchi(
+        cls, col: str = "inchi", parallel: bool = False, dedup: bool = False
+    ) -> "MolExpr":
+        return cls(
+            pl.col(col).map_batches(
+                lambda s: _map(_inchi_to_binary, s, pl.Binary, parallel, dedup),
+                return_dtype=pl.Binary,
+                is_elementwise=not parallel,
+            )
+        )
+
+    @classmethod
+    def col(
+        cls, col: str = "mol", parallel: bool = False, dedup: bool = False
+    ) -> "MolExpr":
         """Wrap an existing binary mol column."""
         return cls(pl.col(col))
+
+    # @classmethod
+    # def from_name(cls, col: str, parallel: bool = False, dedup: bool = False) -> "MolExpr":
+    #     """Wrap an existing binary mol column."""
+    #     return cls(pl.col(col))
+
+    @classmethod
+    def from_col_infer(
+        cls, col: str, parallel: bool = False, dedup: bool = False
+    ) -> "MolExpr":
+        """Infer mol source from column dtype or first non-null value."""
+
+        def _infer(s: pl.Series) -> pl.Series:
+            if s.dtype == pl.Binary:
+                return s
+            first = next((v for v in s if v is not None), None)
+            if first is None:
+                return s
+            if isinstance(first, str) and first.startswith("InChI="):
+                return _map(_inchi_to_binary, s, pl.Binary, parallel, dedup)
+            return _map(_smiles_to_binary, s, pl.Binary, parallel, dedup)
+
+        return cls(
+            pl.col(col).map_batches(
+                _infer,
+                return_dtype=pl.Binary,
+                is_elementwise=not parallel,
+            )
+        )
 
     # --- transforms ---
 
@@ -186,7 +241,7 @@ class MolExpr(pl.Expr):
         pipeline = MolPipeline(steps=tuple(steps))
         return MolExpr(
             self._expr.map_batches(
-                lambda s: _map(pipeline, s, pl.Binary, parallel),
+                lambda s: _map_nodedup(pipeline, s, pl.Binary, parallel),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
             )
@@ -196,68 +251,52 @@ class MolExpr(pl.Expr):
         return MolExpr(self._expr.alias(name))
 
     # --- 'sinks' ---
+    def _to(self, fn, dtype, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        """convert to actual Chem.Mol objects. Cannot be written to parquet"""
+        return self._expr.map_batches(
+            lambda s: _map(fn, s, dtype, parallel, dedup),
+            return_dtype=dtype,
+            is_elementwise=not parallel,
+        )
 
     def to_binary(self, parallel: bool = False) -> pl.Expr:
         return self._expr
 
     def to_smiles(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_smiles, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_smiles, pl.String, parallel)
 
     def to_inchi(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchi, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_inchi, pl.String, parallel)
 
     def to_inchikey(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchikey, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_inchikey, pl.String, parallel)
 
     def to_kekulised_smiles(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_kekulized_smiles, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_kekulized_smiles, pl.String, parallel)
 
     def to_inchi_and_auxinfo(self, parallel: bool = False) -> pl.Expr:
         """from mol to a pl.struct of inchi, inchi_auxinfo, both pl.String types"""
         dtype = pl.Struct({"inchi": pl.String, "inchi_auxinfo": pl.String})
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_inchi_and_auxinfo, s, dtype, parallel),
-            return_dtype=dtype,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_inchi_and_auxinfo, dtype, parallel).struct.unnest()
 
-    def num_atoms(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_num_atoms, s, pl.Int32, parallel),
-            return_dtype=pl.Int32,
-            is_elementwise=not parallel,
-        )
+    def to_descriptors(
+        self,
+        parallel: bool = False,
+        dedup: bool = False,
+    ) -> pl.Expr:
+        dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]
+        fn = partial(_binary_to_descriptors)
+        return self._to(fn, dtype, parallel, dedup).struct.unnest()
 
-    def num_heavy_atoms(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map(_num_heavy_atoms, s, pl.Int32, parallel),
-            return_dtype=pl.Int32,
-            is_elementwise=not parallel,
-        )
+    def num_atoms(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        return self._to(_num_atoms, pl.Int32, parallel, dedup)
 
-    def to_mol_objects(self, parallel: bool = False) -> pl.Expr:
+    def num_heavy_atoms(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        return self._to(_num_heavy_atoms, pl.Int32, parallel, dedup)
+
+    def to_mol_objects(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert to actual Chem.Mol objects. Cannot be written to parquet"""
-        return self._expr.map_batches(
-            lambda s: _map(_binary_to_mol, s, pl.Object, parallel),
-            return_dtype=pl.Object,
-            is_elementwise=not parallel,
-        )
+        return self._to(_binary_to_mol, pl.Object, parallel, dedup)
 
 
 # CHEMBL_PIPELINE = (remove_stereo, chembl_standardise, valid_inchi)
@@ -266,7 +305,7 @@ __all__ = [
     PIPELINE_PAPYRUS,
     PIPELINE_PAPYRUS_NOSTEREO,
     PlMolExpr,
-    MolFn,
+    MolExpr,
 ]
 
 

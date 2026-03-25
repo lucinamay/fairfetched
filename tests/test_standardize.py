@@ -6,6 +6,20 @@ from rdkit.Chem.rdmolops import RemoveAllHs
 from fairfetched.standardize import mol_expr as me
 from fairfetched.standardize.mol_expr import MolExpr
 from fairfetched.standardize.mol_functions import remove_stereo
+from fairfetched.standardize.pipe import with_cleaned_mol_descriptors
+
+TEST_DF = pl.DataFrame(
+    {
+        "name": ["mymol"] * 5,
+        "smiles": [
+            "CCCCCO",
+            "O=C(O)[C@@H](N)C",
+            "CC(=O)OC1=CC=CC=C1C(=O)O",
+            "CCC",
+            "CC(C)OC",
+        ],
+    }
+)
 
 
 def basic_test():
@@ -36,9 +50,7 @@ def test_basic_kekulised_smiles_not_null_polars():
 
 
 def test_standardised_mol_as_binary():
-    df = pl.DataFrame(
-        {"name": ["mymol"] * 5, "smiles": ["CCCCCO", "CC", "CC@OC", "CCC", "CC(C)OC"]}
-    )
+    df = TEST_DF
     parallel = True
     out = df.with_columns(
         pl.col("smiles")  # ty: ignore[unresolved-attribute]
@@ -104,33 +116,22 @@ def test_to_mol_objects():
     assert all(isinstance(i, Mol) for i in out.get_column("mol"))
 
 
-def test_to_mol_objects():
-    df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
+def test_intermediate():
+    df = TEST_DF
     out = df.with_columns(MolExpr.from_smiles("smiles").alias("mol"))
 
     assert out.select(pl.col("mol").is_not_null().all()).item()
 
 
 def test_all_parallel():
-    df = pl.DataFrame(
-        {
-            "name": ["mymol"] * 5,
-            "smiles": [
-                "CCCCCO",
-                "O=C(O)[C@@H](N)C",
-                "CC(=O)OC1=CC=CC=C1C(=O)O",
-                "CCC",
-                "CC(C)OC",
-            ],
-        }
-    )
+    df = TEST_DF
     parallel = True
     out = df.with_columns(MolExpr.from_smiles("smiles", parallel=parallel).alias("mol"))
     assert out.select(pl.col("mol").is_not_null().all()).item()
     assert out.get_column("mol").dtype == pl.Binary
 
     out = out.with_columns(
-        MolExpr.from_col("mol").standardise(
+        MolExpr.col("mol").standardise(
             remove_stereo, *me.PIPELINE_CHEMBL, parallel=parallel
         )
     )
@@ -138,12 +139,10 @@ def test_all_parallel():
     assert out.get_column("mol").dtype == pl.Binary
 
     out_ = out.select(
-        MolExpr.from_col("mol").to_inchi(parallel=parallel).alias("inchi"),
-        MolExpr.from_col("mol")
-        .to_inchi_and_auxinfo(parallel=parallel)
-        .alias("inchi_aux"),
-        MolExpr.from_col("mol").to_kekulised_smiles(parallel=parallel).alias("smiles"),
-        MolExpr.from_col("mol").to_inchikey(parallel=parallel).alias("inchikey"),
+        MolExpr.col("mol").to_inchi(parallel=parallel).alias("inchi_separate"),
+        MolExpr.col("mol").to_inchi_and_auxinfo(parallel=parallel),
+        MolExpr.col("mol").to_kekulised_smiles(parallel=parallel).alias("smiles"),
+        MolExpr.col("mol").to_inchikey(parallel=parallel).alias("inchikey"),
     )
     assert (
         not out_.get_column("smiles").str.contains("@").any()
@@ -151,12 +150,7 @@ def test_all_parallel():
 
     for i in out_.columns:
         assert out_.select(pl.col(i).is_not_null().all()).item()
-        if i == "inchi_aux":
-            assert out_.get_column(i).dtype.is_(
-                pl.Struct({"inchi": pl.String, "inchi_auxinfo": pl.String})
-            )
-        else:
-            assert out_.get_column(i).dtype == pl.String
+        assert out_.get_column(i).dtype == pl.String
 
 
 def my_func(mol):
@@ -164,18 +158,7 @@ def my_func(mol):
 
 
 def test_custom_pipe():
-    df = pl.DataFrame(
-        {
-            "name": ["mymol"] * 5,
-            "smiles": [
-                "CCCCCO",
-                "O=C(O)[C@@H](N)C",
-                "CC(=O)OC1=CC=CC=C1C(=O)O",
-                "CCC",
-                "CC(C)OC",
-            ],
-        }
-    )
+    df = TEST_DF
 
     # out = df.with_columns(
     #     MolExpr.from_smiles("smiles")
@@ -188,3 +171,14 @@ def test_custom_pipe():
         MolExpr.from_smiles("smiles").standardise(my_func, parallel=True).alias("mol")
     )
     assert out.select(pl.col("mol").is_not_null().all()).item()
+
+
+def test_standardise_pipe():
+    df = TEST_DF.lazy()
+    out: pl.DataFrame = df.pipe(with_cleaned_mol_descriptors).collect()
+    print(out)
+    assert out.select(pl.col("smiles").is_not_null().all()).item()
+    assert out.select(pl.col("inchi").is_not_null().all()).item()
+    assert out.select(pl.col("inchi_auxinfo").is_not_null().all()).item()
+    assert out.select(pl.col("inchikey").is_not_null().all()).item()
+    # assert out.select(pl.col("mol").is_not_null().all()).item()
