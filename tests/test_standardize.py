@@ -1,12 +1,11 @@
 import polars as pl
 from rdkit.Chem import Mol
-from rdkit.Chem.Draw.rdMolDraw2D import MolToSVG
 from rdkit.Chem.rdmolops import RemoveAllHs
 
 # import fairfetched.standardization.mol_expr  # ensure namespace registration #ty: ignore[ruff-f401]
-from fairfetched.standardization import mol_expr as me
-from fairfetched.standardization.mol_expr import MolExpr
-from fairfetched.standardization.mol_functions import remove_stereo
+from fairfetched.standardize import mol_expr as me
+from fairfetched.standardize.mol_expr import MolExpr
+from fairfetched.standardize.mol_functions import remove_stereo
 
 
 def basic_test():

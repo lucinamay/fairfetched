@@ -43,8 +43,11 @@ fairfetched = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [
+    "chembl-structure-pipeline>=1.2.4",
     "fairfetched",
+    "papyrus-structure-pipeline>=0.0.5",
     "pytest>=9.0.2",
+    "rdkit>=2025.9.6",
     "rust-just>=1.46.0",
 ]
 
