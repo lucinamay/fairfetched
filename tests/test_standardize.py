@@ -67,7 +67,7 @@ def test_basic_kekulised_smiles_not_null():
 
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardise(*me.PIPELINE_CHEMBL, parallel=True)
+        .standardize(*me.PIPELINE_CHEMBL, parallel=True)
         .to_kekulised_smiles()
         .alias("kekulised_smiles")
     )
@@ -81,7 +81,7 @@ def test_basic_kekulised_smiles_not_null_lazy():
     parallel = True
     out: pl.DataFrame = df.with_columns(  # ty: ignore[invalid-assignment]
         MolExpr.from_smiles("smiles", parallel)
-        .standardise(*me.PIPELINE_CHEMBL, parallel=parallel)
+        .standardize(*me.PIPELINE_CHEMBL, parallel=parallel)
         .to_kekulised_smiles(parallel)
         .alias("kekulised_smiles")
     ).collect()
@@ -94,7 +94,7 @@ def test_intermediate_fine():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardise(*me.PIPELINE_CHEMBL)
+        .standardize(*me.PIPELINE_CHEMBL)
         .alias("intermediate")
     )
 
@@ -106,7 +106,7 @@ def test_to_mol_objects():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardise(*me.PIPELINE_CHEMBL)
+        .standardize(*me.PIPELINE_CHEMBL)
         .to_mol_objects()
         .alias("mol")
     )
@@ -131,7 +131,7 @@ def test_all_parallel():
     assert out.get_column("mol").dtype == pl.Binary
 
     out = out.with_columns(
-        MolExpr.col("mol").standardise(
+        MolExpr.col("mol").standardize(
             remove_stereo, *me.PIPELINE_CHEMBL, parallel=parallel
         )
     )
@@ -168,7 +168,7 @@ def test_custom_pipe():
     # assert out.select(pl.col("mol").is_not_null().all()).item()
 
     out = df.with_columns(
-        MolExpr.from_smiles("smiles").standardise(my_func, parallel=True).alias("mol")
+        MolExpr.from_smiles("smiles").standardize(my_func, parallel=True).alias("mol")
     )
     assert out.select(pl.col("mol").is_not_null().all()).item()
 

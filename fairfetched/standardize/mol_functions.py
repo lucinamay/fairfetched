@@ -58,6 +58,8 @@ safe_step = safe_step_function()
 
 
 MolFn = Callable[[Mol], Mol | None]
+BinaryMolFn = Callable[[bytes], bytes | None]
+BinaryToAnyFn = Callable[[bytes | None], Any | None]
 
 
 @safe_step

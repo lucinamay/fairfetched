@@ -35,9 +35,9 @@ def __tmpfile(true_file: Path) -> Path:
     return pth
 
 
-def overwrite_scanned_lf(lf: pl.LazyFrame, path_: Path) -> None:
+def overwrite_scanned_lf(lf: pl.LazyFrame, path_: Path, **kwargs) -> None:
     tmpfile = __tmpfile(path_)
-    lf.sink_parquet(tmpfile)
+    lf.sink_parquet(tmpfile, **kwargs)
     os.replace(tmpfile, path_)
 
 
@@ -265,7 +265,7 @@ def apply_to_unique(
         unique_molstrings = (
             lf.select(pl.col(from_col)).unique().collect().get_column(from_col)  # ty: ignore[unresolved-attribute]
         )
-        workers = round(os.cpu_count() or 1 * 0.8)
+        workers = round((os.cpu_count() or 2 // 2) * 0.8)
         chunksize = max(1, len(unique_molstrings) // (workers * chunks_per_worker))
         with ProcessPoolExecutor(max_workers=workers) as p:
             res = track(

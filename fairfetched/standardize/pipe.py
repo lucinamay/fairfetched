@@ -32,9 +32,9 @@ from .compound_fns import (
     standardised_nostereo_to_smiles_inchi_aux_inchikey,
 )
 
-lg.warning(
-    "warning: pipe might change soon, preferrably use the mol_expr and its syntax instead"
-)
+# lg.warning(
+#     "warning: pipe might change soon, preferrably use the mol_expr and its syntax instead"
+# )
 
 
 def apply_to_unique_strings(
@@ -108,27 +108,24 @@ def with_cleaned_mol_descriptors_struct(
     )
 
 
-def with_cleaned_mol_descriptors(
+def with_cleaned_mol_descriptors_expression(
     lf: pl.LazyFrame,
     from_col: str = "smiles",
     parallel=True,
+    dedup=True,
     suffix: str = "_original",
     **kwargs,
 ) -> pl.LazyFrame:
     rename = {k: f"{k}{suffix}" for k in Descriptors.dataclass_schema().keys()}
-
+    from_col = rename.get(from_col, from_col)
     return (
         lf.rename(rename, strict=False)
         .with_columns(
-            MolExpr.from_smiles(
-                rename.get(from_col, from_col), parallel=parallel, dedup=True
-            )
-            .standardise(remove_stereo, valid_inchi)
+            MolExpr.from_col_infer(from_col, parallel=parallel, dedup=True)
+            .standardize(remove_stereo, valid_inchi)
             .alias("mol")
         )
-        .with_columns(
-            MolExpr.col("mol", parallel=parallel, dedup=True).to_descriptors()
-        )
+        .with_columns(MolExpr.col(parallel=parallel, dedup=True).to_descriptors())
     )
 
 
@@ -164,7 +161,7 @@ def with_cleaned_mol_descriptors_legacylike(
         .unique()
         .with_columns(
             MolExpr.from_smiles(from_col, parallel=parallel)
-            .standardise(remove_stereo, valid_inchi)
+            .standardize(remove_stereo, valid_inchi)
             .alias("mol")
         )
         .with_columns((v for k, v in expressions.items() if k in descriptors)),
@@ -204,6 +201,9 @@ def with_cleaned_mol_descriptors_legacy(
         .with_columns(pl.col(to_col).struct.unnest())
         .drop(to_col)
     )
+
+
+with_cleaned_mol_descriptors = with_cleaned_mol_descriptors_legacy
 
 
 def with_mols_from_inchi_batched(lf, alias="mol", parallel=False):

@@ -31,9 +31,9 @@ from fairfetched.utils._track import track
 
 from ._optional import _papyrus_standardize
 
-lg.warning(
-    "warning: compound_fns will be deprecated soon, please use the mol_functions and its syntax instead"
-)
+# lg.warning(
+#     "warning: compound_fns will be deprecated soon, please use the mol_functions and its syntax instead"
+# )
 
 # Dedicated logger for _smiles_to_clean_mol
 mlg = lg.getLogger("fairfetched.standardization.compound_fns")
