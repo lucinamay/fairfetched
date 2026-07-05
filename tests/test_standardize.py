@@ -1,4 +1,5 @@
 import polars as pl
+import pytest
 from rdkit.Chem import Mol
 from rdkit.Chem.rdmolops import RemoveAllHs
 
@@ -88,6 +89,20 @@ def test_basic_kekulised_smiles_not_null_lazy():
 
     assert out.select(pl.col("kekulised_smiles").is_not_null().all()).item()
     assert out.select(pl.col("kekulised_smiles").eq(pl.col("smiles")).all()).item()
+
+
+@pytest.mark.parametrize("fp_size", [1024, 2048])
+def test_morgan_fp(fp_size):
+    df = TEST_DF
+    out = df.with_columns(
+        MolExpr.from_smiles(parallel=False)
+        .to_morgan_fp(fp_size=fp_size)
+        .alias("morgan")
+    )
+
+    assert out.get_column("morgan").dtype == pl.Array
+    assert out.get_column("morgan").dtype == pl.Array(pl.UInt8, shape=fp_size)
+    assert out.get_column("morgan").n_unique() == df.n_unique(["smiles"])
 
 
 def test_intermediate_fine():

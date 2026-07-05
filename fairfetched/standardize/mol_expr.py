@@ -20,6 +20,7 @@ from .mol_functions import (
     _binary_to_inchikey,
     _binary_to_kekulized_smiles,
     _binary_to_mol,
+    _binary_to_morgan_array,
     _binary_to_smiles,
     _inchi_to_binary,
     _num_atoms,
@@ -302,9 +303,23 @@ class MolExpr(pl.Expr):
         parallel: bool = False,
         dedup: bool = False,
     ) -> pl.Expr:
+        """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as ‘smiles’)"""
         dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]
         fn = partial(_binary_to_descriptors)
         return self._apply(fn, dtype, parallel, dedup).struct.unnest()
+
+    def to_morgan_fp(
+        self,
+        radius: int = 3,
+        fp_size: int = 2048,
+        parallel: bool = False,
+        dedup: bool = False,
+        **kwargs,
+    ) -> pl.Expr:
+        """convenience function for morgan fingerprint generation. expression generates an array of dtype pl.Array(pl.UInt8, fp_size)"""
+        fn = partial(_binary_to_morgan_array, radius=radius, fp_size=fp_size, **kwargs)
+        dtype = pl.Array(pl.UInt8, fp_size)
+        return self._apply(fn, dtype, parallel, dedup)
 
     def num_atoms(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         return self._apply(_num_atoms, pl.Int32, parallel, dedup)

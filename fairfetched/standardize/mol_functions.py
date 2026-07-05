@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, fields
-from functools import cached_property, wraps
-from typing import Any, Callable, Literal, ParamSpec, TypedDict, TypeVar, get_type_hints
+from dataclasses import dataclass, fields
+from functools import lru_cache, wraps
+from typing import Any, Callable, ParamSpec, TypeVar
+
+from numpy import uint8
+from numpy.typing import NDArray
 
 # from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
 from rdkit import Chem
@@ -15,6 +18,7 @@ from rdkit.Chem import (
     MolToInchiAndAuxInfo,
     RemoveStereochemistry,
 )
+from rdkit.Chem.rdFingerprintGenerator import FingerprintGenerator64, GetMorganGenerator
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
@@ -60,6 +64,13 @@ safe_step = safe_step_function()
 MolFn = Callable[[Mol], Mol | None]
 BinaryMolFn = Callable[[bytes], bytes | None]
 BinaryToAnyFn = Callable[[bytes | None], Any | None]
+
+
+@lru_cache(maxsize=1)
+def _get_morgan_generator(
+    radius: int, fp_size: int, **kwargs
+) -> FingerprintGenerator64:
+    return GetMorganGenerator(radius=radius, fpSize=fp_size, **kwargs)
 
 
 @safe_step
@@ -176,6 +187,15 @@ def _binary_to_descriptors(b: bytes | None) -> Descriptors | None:
         inchikey=InchiToInchiKey(inchi),
         smiles=MolToSmiles(mol, kekuleSmiles=True, isomericSmiles=False),
     )
+
+
+@safe_step
+def _binary_to_morgan_array(
+    b: bytes | None, radius: int, fp_size: int, **kwargs
+) -> NDArray[uint8] | None:
+    mol = Chem.Mol(b)
+    gen = _get_morgan_generator(radius=radius, fp_size=fp_size, **kwargs)
+    return gen.GetFingerprintAsNumPy(mol)
 
 
 @safe_step
