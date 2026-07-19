@@ -20,7 +20,7 @@ class ComposedLFDict(TypedDict):
 class DatasetGetModule(Protocol):
     """Protocol for the logic required in the get.papyrus, get.chembl files
 
-    For referencing use in the general _Base API of get.api.
+    For referencing use in the general _Base API of get.dataset.
     """
 
     __name__: str

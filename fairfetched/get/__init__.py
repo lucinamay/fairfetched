@@ -1,4 +1,4 @@
-from .api import Chembl, Papyrus
+from .dataset import Chembl, Papyrus
 
 __all__ = ["Chembl", "Papyrus"]
 

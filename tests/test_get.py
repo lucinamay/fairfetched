@@ -12,7 +12,7 @@ import polars as pl
 import pytest
 
 from fairfetched.get import chembl, papyrus
-from fairfetched.get.api import Chembl, Papyrus
+from fairfetched.get.dataset import Chembl, Papyrus
 
 # ============================================================================
 # Global fixture to patch ensure_url for all tests
