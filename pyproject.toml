@@ -5,7 +5,6 @@ description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "duckdb>=1.5.4",
     "polars>=1.38.1",
 ]
 
