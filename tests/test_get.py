@@ -317,7 +317,7 @@ class TestChemblVersions:
     def test_get_sources_returns_dict(self):
         """Sources for a version should be a dict with URL strings."""
         latest = chembl.latest()
-        sources = chembl.get_sources(latest)
+        sources = chembl.source_urls(latest)
         assert isinstance(sources, dict)
         assert "sql_db" in sources
         assert sources["sql_db"].startswith("https://")
@@ -386,7 +386,7 @@ class TestChemblClean:
 
     def test_clean_returns_lazy_frames(self, sample_chembl_parquets):
         """clean() should return dict of LazyFrames."""
-        result = chembl.clean(sample_chembl_parquets)
+        result = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
 
         assert isinstance(result, dict)
         assert len(result) > 0
@@ -404,7 +404,7 @@ class TestChemblClean:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()
 
         assert all(col.islower() for col in collected.columns)
@@ -420,7 +420,7 @@ class TestChemblClean:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()
 
         # Check for None values (empty strings should be replaced)
@@ -875,7 +875,7 @@ class TestEdgeCases:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()
 
         assert collected["name"][1] is None
@@ -922,7 +922,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert collected["value"][1] is None
@@ -939,7 +939,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert "mixedcase" in collected.columns
@@ -958,7 +958,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert collected["int_col"].dtype == pl.Int64
@@ -1042,7 +1042,7 @@ class TestDataIntegrity:
 
     def test_clean_to_build_views_column_consistency(self, sample_chembl_parquets):
         """Column names should be consistent from clean through build_views."""
-        lfs = chembl.clean(sample_chembl_parquets)
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
         views = chembl.build_views(sample_chembl_parquets)
@@ -1077,7 +1077,7 @@ class TestDataIntegrity:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         # Check that empty strings in string columns are replaced
