@@ -1,10 +1,12 @@
-import datetime
 import logging as lg
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from ._track import track
+
+_lg = lg.getLogger(__name__)
 
 
 def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
@@ -14,7 +16,7 @@ def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists() and not force:
-        lg.debug(f"File already exists at {path}. Skipping download.")
+        _lg.debug(f"File already exists at {path}. Skipping download.")
         return path
 
     req = urllib.request.Request(url)
@@ -38,5 +40,5 @@ def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
                 desc=f"downloading {url.split('/')[-1]}",
             ):
                 f.write(chunk)
-    lg.info(f"Downloaded {url} to {path} on {datetime.datetime.now()}")
+    _lg.info(f"Downloaded {url} to {path} on {datetime.now()}")  # ruff: ignore[DTZ005]
     return path

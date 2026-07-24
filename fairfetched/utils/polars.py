@@ -78,7 +78,7 @@ def ensure_sqlite_db_to_parquets(
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
-    tables = _sqlite_tables(db_path)
+    # tables = _sqlite_tables(db_path)
     conn = sqlite3.connect(db_path)
 
     # get user tables

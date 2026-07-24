@@ -82,13 +82,14 @@ class Chembl(_Base):
         cls,
         version: str | int | float,  # ruff: ignore[PYI041]
         root_dir: Path | str = f"{BASE_DIR}/chembl",
+        force: bool = False,
     ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
         version = chembl._format_version(version)
         dir = Path(root_dir) / version
 
         raw_paths: dict[str, Path] = chembl.ensure_raw_files(
-            version, raw_dir=dir / "raw"
+            version, raw_dir=dir / "raw", force=force
         )
 
         parquet_paths = chembl.ensure_parquet_tables(
@@ -106,8 +107,9 @@ class Chembl(_Base):
     def from_latest(
         cls,
         root_dir: Path | str = f"{BASE_DIR}/chembl",
+        force: bool = False,
     ) -> "Chembl":
-        return cls.from_version(version=chembl.latest(), root_dir=root_dir)
+        return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
 @dataclass(frozen=True)

@@ -59,14 +59,16 @@ def source_urls(version: str) -> dict[str, str]:
 
 
 def ensure_raw_files(
-    version: str, raw_dir: Path | str | None = None
+    version: str, raw_dir: Path | str | None = None, force=False
 ) -> dict[str, Path]:
     """Download the original SQL database with its original name and compression."""
     if raw_dir is None:
         raw_dir = CHEMBL_DIR / version
     raw_dir = Path(raw_dir)
     return {
-        name: ensure_url(url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}")
+        name: ensure_url(
+            url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}", force=force
+        )
         for name, url in source_urls(version).items()
     }
 
@@ -215,11 +217,3 @@ def _compounds(parquet_paths: dict[str, Path]) -> pl.LazyFrame:
             validate="1:m",
         )
     )
-
-
-# Compatibility aliases for callers using the pre-refactor names.
-get_sources = source_urls
-ensure_raw = ensure_raw_files
-ensure_parquet = ensure_parquet_tables
-clean = cleanly_scan_parquet_tables
-compose = build_views
