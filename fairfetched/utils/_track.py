@@ -1,4 +1,4 @@
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._optional import in_marimo, rich_track, tqdm_track
 

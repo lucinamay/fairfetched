@@ -1,5 +1,6 @@
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import polars as pl
 
@@ -11,12 +12,12 @@ from fairfetched.utils import (
     file_suffix_from_url,
     lowercase_columns,
 )
-from fairfetched.utils.typing import ComposedLFDict
+from fairfetched.utils.typing import BioactivityDBViews
 
 CHEMBL_DIR = BASE_DIR / "chembl"
 
 
-def _version_formatter(version: int | float | str) -> str:
+def _format_version(version: float | str) -> str:
     if isinstance(version, int | float):
         version = str(version)
     if isinstance(version, Sequence) and not isinstance(version, str):
@@ -41,9 +42,7 @@ def _version_to_url(version: str):
 
 CHEMBL_VERSIONS: dict[str, dict[str, str]] = {
     version: {"sql_db": _version_to_url(version)}
-    for version in sorted(
-        map(_version_formatter, list(range(1, 37)) + ["24_1", "22_1"])
-    )
+    for version in sorted(map(_format_version, list(range(1, 38)) + ["24_1", "22_1"]))
 }
 
 
@@ -55,63 +54,74 @@ def latest() -> str:
     return available_versions()[-1]
 
 
-def get_sources(version: str) -> dict[str, str]:
+def source_urls(version: str) -> dict[str, str]:
     return CHEMBL_VERSIONS[str(version)]
 
 
-def ensure_raw(version: str, raw_dir: Path | str | None = None) -> dict[str, Path]:
-    """downloads the original sql database, with its original name and compression"""
+def ensure_raw_files(
+    version: str, raw_dir: Path | str | None = None, force=False
+) -> dict[str, Path]:
+    """Download the original SQL database with its original name and compression."""
     if raw_dir is None:
         raw_dir = CHEMBL_DIR / version
     raw_dir = Path(raw_dir)
     return {
-        name: ensure_url(url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}")
-        for name, url in get_sources(version).items()
+        name: ensure_url(
+            url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}", force=force
+        )
+        for name, url in source_urls(version).items()
     }
 
 
-def ensure_consolidated(
-    raw_paths: dict[str, Path], consolidated_dir: Path | str | Any | None = None
+def ensure_parquet_tables(
+    raw_paths: dict[str, Path], table_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
     sql_tar_gz_path = raw_paths["sql_db"]
-    if consolidated_dir is None:
-        consolidated_dir = Path(sql_tar_gz_path).parent / "extracted"
-    consolidated_dir = Path(consolidated_dir)
-    consolidated_dir.mkdir(exist_ok=True, parents=True)
+    if table_dir is None:
+        table_dir = Path(sql_tar_gz_path).parent / "extracted"
+    table_dir = Path(table_dir)
+    table_dir.mkdir(exist_ok=True, parents=True)
 
     raw_sql = ensure_untarred_sqlite(sql_tar_gz_path)
     # the untarred should also stay so that we have access.....
     # #@TODO: perhaps make tables deterministic for chembl to circumvent
-    parquets = ensure_sqlite_db_to_parquets(
-        raw_sql, cache_dir=consolidated_dir, force=False
-    )
+    parquets = ensure_sqlite_db_to_parquets(raw_sql, cache_dir=table_dir, force=False)
 
     return parquets
 
 
-def clean(extracted_sqlite_parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
-    return {
-        name: pl.scan_parquet(path_)
+def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
+    """scans parquet paths and lazily handles null value conversion to None"""
+    return (
+        pl.scan_parquet(path_)
         .pipe(lowercase_columns)
         .fill_nan(None)
         .with_columns(
             pl.col(pl.String).replace({"": None}),
         )
-        for name, path_ in extracted_sqlite_parquet_paths.items()
-    }
+    )
 
 
-def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
-    """Join/combine lazy frames. Optional, returns single LF."""
+def cleanly_scan_parquet_tables(
+    parquet_paths: dict[str, Path],
+) -> dict[str, pl.LazyFrame]:
+    """scans parquet paths and lazily handles null value conversion to None"""
+    return {name: cleanly_scan_parquet(path_) for name, path_ in parquet_paths.items()}
+
+
+# def build_views(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
+def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+    """Build joined domain views from the scanned source tables."""
     return {
-        "bioactivity": _bioactivities(lfs),
-        "compounds": _compounds(lfs),
-        "proteins": lfs["protein"],
-        "components": _components(lfs),
+        "bioactivity": _bioactivities(parquet_paths),
+        "compounds": _compounds(parquet_paths),
+        "proteins": cleanly_scan_parquet(parquet_paths["protein"]),
+        "components": _components(parquet_paths),
     }
 
 
-def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+def _bioactivities(parquet_paths: dict[str, Path]) -> pl.LazyFrame:
+    lfs = cleanly_scan_parquet_tables(parquet_paths)
     return (
         # dfs["activity_properties"]
         # .join(dfs["activities"], on="activity_id", how="left")
@@ -135,7 +145,8 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     )
 
 
-def _components(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+def _components(parquet_paths: dict[str, Path]) -> pl.LazyFrame:
+    lfs = cleanly_scan_parquet_tables(parquet_paths)
     return (
         lfs["component_sequences"]
         .join(
@@ -168,7 +179,8 @@ def _components(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     )
 
 
-def _compounds(lfs) -> pl.LazyFrame:
+def _compounds(parquet_paths: dict[str, Path]) -> pl.LazyFrame:
+    lfs = cleanly_scan_parquet_tables(parquet_paths)
     return (
         lfs["molecule_dictionary"]
         .join(

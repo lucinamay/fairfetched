@@ -1,12 +1,14 @@
 from pathlib import Path
-from typing import Any, NotRequired, Protocol, Tuple, TypedDict
+from typing import Any, NotRequired, Protocol, TypedDict
 
 from polars import LazyFrame
 
 
-class ComposedLFDict(TypedDict):
-    """a dictionary with different lazyframes composed from raw cheminformatics
-    databases. requires at minimum a bioactivity and compounds dataframe"""
+class BioactivityDBViews(TypedDict):
+    """a dictionary with different 'views' from raw cheminformatics
+    databases, as lazyframes.
+    requires at minimum a bioactivity and compounds dataframe
+    """
 
     bioactivity: LazyFrame
     compounds: LazyFrame
@@ -20,13 +22,13 @@ class ComposedLFDict(TypedDict):
 class DatasetGetModule(Protocol):
     """Protocol for the logic required in the get.papyrus, get.chembl files
 
-    For referencing use in the general _Base API of get.api.
+    For referencing use in the general _Base API of get.dataset.
     """
 
     __name__: str
     __file__: str
 
-    def available_versions(self) -> Tuple[str]:
+    def available_versions(self) -> tuple[str, ...]:
         """returns available versions of database"""
         ...
 
@@ -34,35 +36,32 @@ class DatasetGetModule(Protocol):
         """returns latest version of database"""
         ...
 
-    def get_sources(self, version: str) -> dict[str, str]:
-        """returns a dict of URLs of the sources of database"""
+    def source_urls(self, version: str) -> dict[str, str]:
+        """Return the source URLs for a database version."""
         ...
 
-    def ensure_raw(
+    def ensure_raw_files(
         self, version: str, raw_dir: Path | str | Any | None = None
     ) -> dict[str, Path]:
-        """downloads raw files for specified version from database sources
-        to cache dir if not yet present, and returns a dictionary of the source
-        names and the paths to their raw files."""
+        """Download raw files for a version and return their paths."""
         ...
 
-    def ensure_consolidated(
+    def ensure_parquet_tables(
         self,
         raw_paths: dict[str, Path],
-        consolidated_dir: Path | str | Any | None = None,
+        table_dir: Path | str | None = None,
     ) -> dict[str, Path]:
-        """from dictionary of raw files, makes sure that all files are in parquet
-        format to allow lazy loading with pl.scan. assigns datatypes and
-        consolidates null values in case of ambiguous formats such as csv"""
+        """Convert raw files to Parquet table files and return their paths."""
         ...
 
-    def clean(self, paths: dict[str, Path]) -> dict[str, LazyFrame]:
-        """does rest of standardisation, such as column renaming etc"""
+    def cleanly_scan_parquet_tables(
+        self, parquet_paths: dict[str, Path]
+    ) -> dict[str, LazyFrame]:
+        """Scan table files and apply dataset-specific cleanup."""
         ...
 
-    def compose(self, lfs: dict[str, LazyFrame]) -> ComposedLFDict:
-        """composes into few, comprehensive lazyframes through joins and
-        pivots."""
+    def build_views(self, parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+        """Build comprehensive lazy views through joins and pivots."""
         ...
 
 
