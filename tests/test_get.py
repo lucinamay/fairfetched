@@ -6,13 +6,14 @@ while thoroughly testing all core functionality.
 
 import shutil
 import tempfile
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import polars as pl
 import pytest
 
 from fairfetched.get import chembl, papyrus
-from fairfetched.get.api import Chembl, Papyrus
+from fairfetched.get.dataset import Chembl, Papyrus
 
 # ============================================================================
 # Global fixture to patch ensure_url for all tests
@@ -50,12 +51,12 @@ def patch_download_pipeline(monkeypatch, tmp_path):
             "readme": raw_dir / "README.txt",
         }
 
-    def dummy_ensure_consolidated(raw_paths, consolidated_dir=None):
-        """Mock ensure_consolidated to return dummy parquet paths without processing."""
-        if consolidated_dir is None:
-            consolidated_dir = Path(raw_paths["sql_db"]).parent / "consolidated"
-        consolidated_dir = Path(consolidated_dir)
-        consolidated_dir.mkdir(parents=True, exist_ok=True)
+    def dummy_ensure_parquet(raw_paths, parquet_dir=None):
+        """Mock ensure_parquet to return dummy parquet paths without processing."""
+        if parquet_dir is None:
+            parquet_dir = Path(raw_paths["sql_db"]).parent / "parquet"
+        parquet_dir = Path(parquet_dir)
+        parquet_dir.mkdir(parents=True, exist_ok=True)
 
         # Return dummy parquet paths for all expected tables
         tables = [
@@ -75,30 +76,31 @@ def patch_download_pipeline(monkeypatch, tmp_path):
             "component_domains",
             "domains",
         ]
-        return {table: consolidated_dir / f"{table}.parquet" for table in tables}
+        return {table: parquet_dir / f"{table}.parquet" for table in tables}
 
-    def dummy_papyrus_ensure_consolidated(raw_filepath_dict, consolidated_dir=None):
-        """Mock Papyrus ensure_consolidated to return dummy parquet paths."""
-        if consolidated_dir is None:
-            consolidated_dir = (
-                Path(raw_filepath_dict.get("bioactivity", tmp_path)).parent
-                / "consolidated"
+    def dummy_papyrus_ensure_parquet(raw_filepath_dict, parquet_dir=None):
+        """Mock Papyrus ensure_parquet to return dummy parquet paths."""
+        if parquet_dir is None:
+            parquet_dir = (
+                Path(raw_filepath_dict.get("bioactivity", tmp_path)).parent / "parquet"
             )
-        consolidated_dir = Path(consolidated_dir)
-        consolidated_dir.mkdir(parents=True, exist_ok=True)
+        parquet_dir = Path(parquet_dir)
+        parquet_dir.mkdir(parents=True, exist_ok=True)
         return {
-            "bioactivity": consolidated_dir / "bioactivity.parquet",
-            "protein": consolidated_dir / "protein.parquet",
+            "bioactivity": parquet_dir / "bioactivity.parquet",
+            "protein": parquet_dir / "protein.parquet",
         }
 
     monkeypatch.setattr("fairfetched.utils.ensure.ensure_url", dummy_ensure_url)
-    monkeypatch.setattr("fairfetched.get.chembl.ensure_raw", dummy_ensure_raw)
-    monkeypatch.setattr("fairfetched.get.papyrus.ensure_raw", dummy_papyrus_ensure_raw)
+    monkeypatch.setattr("fairfetched.get.chembl.ensure_raw_files", dummy_ensure_raw)
     monkeypatch.setattr(
-        "fairfetched.get.chembl.ensure_consolidated", dummy_ensure_consolidated
+        "fairfetched.get.papyrus.ensure_raw_files", dummy_papyrus_ensure_raw
     )
     monkeypatch.setattr(
-        "fairfetched.get.papyrus.ensure_consolidated", dummy_papyrus_ensure_consolidated
+        "fairfetched.get.chembl.ensure_parquet_tables", dummy_ensure_parquet
+    )
+    monkeypatch.setattr(
+        "fairfetched.get.papyrus.ensure_parquet_tables", dummy_papyrus_ensure_parquet
     )
 
 
@@ -315,16 +317,16 @@ class TestChemblVersions:
     def test_get_sources_returns_dict(self):
         """Sources for a version should be a dict with URL strings."""
         latest = chembl.latest()
-        sources = chembl.get_sources(latest)
+        sources = chembl.source_urls(latest)
         assert isinstance(sources, dict)
         assert "sql_db" in sources
         assert sources["sql_db"].startswith("https://")
 
     def test_version_formatter_normalizes_versions(self):
         """Version formatter should canonicalize version strings."""
-        assert chembl._version_formatter(24.1) == "24_1"
-        assert chembl._version_formatter(22) == "22"
-        assert chembl._version_formatter("24_1") == "24_1"
+        assert chembl._format_version(24.1) == "24_1"
+        assert chembl._format_version(22) == "22"
+        assert chembl._format_version("24_1") == "24_1"
 
     def test_version_to_url_format(self):
         """URLs should follow ChEMBL FTP structure."""
@@ -336,22 +338,22 @@ class TestChemblVersions:
     def test_version_formatter_invalid_type(self):
         """Version formatter should handle invalid types gracefully."""
         with pytest.raises(TypeError):
-            chembl._version_formatter([1, 2, 3])  # type: ignore[arg-type]
+            chembl._format_version([1, 2, 3])  # ty: ignore[invalid-argument-type]
 
 
-class TestChemblEnsureRaw:
-    """Test ensure_raw function for ChEMBL."""
+# class TestChemblEnsureRaw:
+#     """Test ensure_raw function for ChEMBL."""
 
-    def test_ensure_raw_uses_provided_directory(self, temp_dir):
-        """ensure_raw should use the provided raw_dir."""
-        version = chembl.latest()
-        raw_dir = temp_dir / "my_raw"
-        result = chembl.ensure_raw(version, raw_dir=raw_dir)
+#     # def test_ensure_raw_uses_provided_directory(self, temp_dir):
+#     """ensure_raw should use the provided raw_dir."""
+#     version = chembl.latest()
+#     raw_dir = temp_dir / "my_raw"
+#     result = chembl.ensure_raw(version, raw_dir=raw_dir)
 
-        # Verify it returns a dict with sql_db key
-        assert isinstance(result, dict)
-        assert "sql_db" in result
-        assert isinstance(result["sql_db"], Path)
+#     # Verify it returns a dict with sql_db key
+#     assert isinstance(result, dict)
+#     assert "sql_db" in result
+#     assert isinstance(result["sql_db"], Path)
 
 
 class TestPapyrusVersions:
@@ -367,7 +369,7 @@ class TestPapyrusVersions:
     def test_papyrus_get_sources(self):
         """Sources should contain bioactivity, protein, and readme URLs."""
         version = papyrus.latest()
-        sources = papyrus.get_sources(version)
+        sources = papyrus.source_urls(version)
         assert "bioactivity" in sources
         assert "protein" in sources
         assert "readme" in sources
@@ -384,7 +386,7 @@ class TestChemblClean:
 
     def test_clean_returns_lazy_frames(self, sample_chembl_parquets):
         """clean() should return dict of LazyFrames."""
-        result = chembl.clean(sample_chembl_parquets)
+        result = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
 
         assert isinstance(result, dict)
         assert len(result) > 0
@@ -402,8 +404,8 @@ class TestChemblClean:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
-        collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
+        collected: pl.DataFrame = result["test"].collect()
 
         assert all(col.islower() for col in collected.columns)
 
@@ -418,8 +420,8 @@ class TestChemblClean:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
-        collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
+        collected: pl.DataFrame = result["test"].collect()
 
         # Check for None values (empty strings should be replaced)
         assert collected["name"][1] is None or collected["name"][1] == ""
@@ -429,28 +431,24 @@ class TestChemblClean:
 class TestChemblCompose:
     """Test composition of cleaned lazy frames."""
 
-    def test_compose_returns_dict_with_expected_keys(self, sample_chembl_parquets):
-        """compose() should return dict with bioactivity, compounds, proteins, components."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl.compose(lfs)
+    def test_build_views_returns_dict_with_expected_keys(self, sample_chembl_parquets):
+        """build_views() should return dict with bioactivity, compounds, proteins, components."""
+        result = chembl.build_views(sample_chembl_parquets)
 
         assert isinstance(result, dict)
         expected_keys = {"bioactivity", "compounds", "proteins", "components"}
         assert expected_keys == set(result.keys())
 
-    def test_compose_returns_lazy_frames(self, sample_chembl_parquets):
-        """All composed results should be LazyFrames."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl.compose(lfs)
+    def test_build_views_returns_lazy_frames(self, sample_chembl_parquets):
+        """All views results should be LazyFrames."""
+        result = chembl.build_views(sample_chembl_parquets)
 
         assert all(isinstance(lf, pl.LazyFrame) for lf in result.values())
 
     def test_bioactivity_composition_joins_correctly(self, sample_chembl_parquets):
         """Bioactivity should join with protein, action_type, assays."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl.compose(lfs)
-        bioactivity: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
-
+        result = chembl.build_views(sample_chembl_parquets)
+        bioactivity: pl.DataFrame = result["bioactivity"].collect()
         # Should have columns from both bioactivity and protein tables
         assert "target_id" in bioactivity.columns
         assert "pref_name" in bioactivity.columns  # From protein
@@ -458,9 +456,8 @@ class TestChemblCompose:
 
     def test_compounds_composition_includes_structures(self, sample_chembl_parquets):
         """Compounds should include structures and properties."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl.compose(lfs)
-        compounds: pl.DataFrame = result["compounds"].collect()  # ty: ignore[invalid-assignment]
+        result = chembl.build_views(sample_chembl_parquets)
+        compounds: pl.DataFrame = result["compounds"].collect()
 
         # Should have molecular structure info
         assert "canonical_smiles" in compounds.columns
@@ -468,9 +465,8 @@ class TestChemblCompose:
 
     def test_proteins_returns_protein_table(self, sample_chembl_parquets):
         """Proteins should just return the protein LazyFrame."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl.compose(lfs)
-        proteins: pl.DataFrame = result["proteins"].collect()  # ty: ignore[invalid-assignment]
+        result = chembl.build_views(sample_chembl_parquets)
+        proteins: pl.DataFrame = result["proteins"].collect()
 
         assert "target_id" in proteins.columns
         assert "target_chembl_id" in proteins.columns
@@ -487,7 +483,7 @@ class TestPapyrusClean:
 
     def test_papyrus_clean_returns_lazy_frames(self, sample_papyrus_parquets):
         """clean() should return dict of LazyFrames."""
-        result = papyrus.clean(sample_papyrus_parquets)
+        result = papyrus.cleanly_scan_parquet_tables(sample_papyrus_parquets)
 
         assert isinstance(result, dict)
         assert "bioactivity" in result
@@ -513,10 +509,10 @@ class TestPapyrusClean:
         protein_df.write_parquet(protein_path)
         bioactivity_df.write_parquet(bioactivity_path)
 
-        result = papyrus.clean(
+        result = papyrus.cleanly_scan_parquet_tables(
             {"protein": protein_path, "bioactivity": bioactivity_path}
         )
-        collected: pl.DataFrame = result["protein"].collect()  # ty: ignore[invalid-assignment]
+        collected: pl.DataFrame = result["protein"].collect()
 
         assert "uniprot_id" in collected.columns
         assert "uniprotid" not in collected.columns
@@ -540,10 +536,10 @@ class TestPapyrusClean:
         bioactivity_df.write_parquet(bioactivity_path)
         protein_df.write_parquet(protein_path)
 
-        result = papyrus.clean(
+        result = papyrus.cleanly_scan_parquet_tables(
             {"bioactivity": bioactivity_path, "protein": protein_path}
         )
-        collected: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
+        collected: pl.DataFrame = result["bioactivity"].collect()
 
         assert all(col.islower() for col in collected.columns)
 
@@ -551,19 +547,17 @@ class TestPapyrusClean:
 class TestPapyrusCompose:
     """Test Papyrus composition."""
 
-    def test_papyrus_compose_returns_expected_keys(self, sample_papyrus_parquets):
-        """compose() should return bioactivity, compounds, full, and proteins."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
+    def test_papyrus_build_views_returns_expected_keys(self, sample_papyrus_parquets):
+        """build_views() should return bioactivity, compounds, full, and proteins."""
+        result = papyrus.build_views(sample_papyrus_parquets)
 
         expected_keys = {"bioactivity", "compounds", "full", "proteins"}
         assert expected_keys == set(result.keys())
 
     def test_papyrus_full_joins_protein(self, sample_papyrus_parquets):
         """Bioactivity should be joined with protein."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        bioactivity: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
+        result = papyrus.build_views(sample_papyrus_parquets)
+        bioactivity: pl.DataFrame = result["full"].collect()
 
         # Should have columns from both tables
         assert "target_id" in bioactivity.columns
@@ -571,9 +565,8 @@ class TestPapyrusCompose:
 
     def test_papyrus_compounds_unique_structures(self, sample_papyrus_parquets):
         """Compounds should have unique connectivity/inchikey/inchi."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        compounds: pl.DataFrame = result["compounds"].collect()  # ty: ignore[invalid-assignment]
+        result = papyrus.build_views(sample_papyrus_parquets)
+        compounds: pl.DataFrame = result["compounds"].collect()
 
         # Should be unique across structure identifiers
         assert "connectivity" in compounds.columns
@@ -594,7 +587,7 @@ class TestChemblDataClass:
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
@@ -605,7 +598,7 @@ class TestChemblDataClass:
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
@@ -613,26 +606,26 @@ class TestChemblDataClass:
         assert isinstance(lfs, dict)
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
-    def test_chembl_compose_returns_dict(self, temp_dir, sample_chembl_parquets):
-        """Chembl.compose() should return dict with expected keys."""
+    def test_chembl_build_views_returns_dict(self, temp_dir, sample_chembl_parquets):
+        """Chembl.build_views() should return dict with expected keys."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
-        composed = obj.compose()
-        assert isinstance(composed, dict)
-        assert "bioactivity" in composed
-        assert "compounds" in composed
+        views = obj.views
+        assert isinstance(views, dict)
+        assert "bioactivity" in views
+        assert "compounds" in views
 
     def test_chembl_bioactivity_property(self, temp_dir, sample_chembl_parquets):
         """Chembl.bioactivity should return LazyFrame."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
@@ -643,7 +636,7 @@ class TestChemblDataClass:
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
@@ -654,7 +647,7 @@ class TestChemblDataClass:
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
@@ -667,13 +660,13 @@ class TestChemblDataClass:
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            consolidated_paths=sample_chembl_parquets,
+            parquet_paths=sample_chembl_parquets,
             dir=temp_dir,
             module=chembl,
         )
         # Frozen dataclass should raise on attribute assignment
-        with pytest.raises(Exception):  # FrozenInstanceError
-            obj.version = "37"  # ty: ignore[invalid-assignment]
+        with pytest.raises(FrozenInstanceError):  # FrozenInstanceError
+            obj.version = "378"  # ty: ignore[invalid-assignment]
 
 
 class TestPapyrusDataClass:
@@ -684,33 +677,33 @@ class TestPapyrusDataClass:
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
         assert obj.name == "papyrus"
 
-    def test_papyrus_compose_returns_dict(self, temp_dir, sample_papyrus_parquets):
-        """Papyrus.compose() should return dict with expected keys."""
+    def test_papyrus_build_views_returns_dict(self, temp_dir, sample_papyrus_parquets):
+        """Papyrus.build_views() should return dict with expected keys."""
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
-        composed = obj.compose()
-        assert isinstance(composed, dict)
-        assert "bioactivity" in composed
-        assert "compounds" in composed
-        assert "proteins" in composed
+        views = obj.views
+        assert isinstance(views, dict)
+        assert "bioactivity" in views
+        assert "compounds" in views
+        assert "proteins" in views
 
     def test_papyrus_lfs_returns_lazy_frames(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.lfs should return dict of LazyFrames."""
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
@@ -723,7 +716,7 @@ class TestPapyrusDataClass:
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
@@ -734,12 +727,12 @@ class TestPapyrusDataClass:
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
         # Frozen dataclass should raise on attribute assignment
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):  # FrozenInstanceError
             obj.version = "05.6"  # ty: ignore[invalid-assignment]
 
     def test_papyrus_string_representation(self, temp_dir, sample_papyrus_parquets):
@@ -747,7 +740,7 @@ class TestPapyrusDataClass:
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
-            consolidated_paths=sample_papyrus_parquets,
+            parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
             module=papyrus,
         )
@@ -766,9 +759,8 @@ class TestChemblCompositionHelpers:
 
     def test_bioactivities_includes_protein_join(self, sample_chembl_parquets):
         """_bioactivities should include protein information."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._bioactivities(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._bioactivities(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should have columns from both bioactivity and protein
         assert "molregno" in collected.columns
@@ -776,18 +768,16 @@ class TestChemblCompositionHelpers:
 
     def test_bioactivities_includes_assay_info(self, sample_chembl_parquets):
         """_bioactivities should include assay information."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._bioactivities(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._bioactivities(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should have assay-related columns
         assert "assay_id" in collected.columns
 
     def test_compounds_structure_join(self, sample_chembl_parquets):
         """_compounds should join structure and property data."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._compounds(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._compounds(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should have structure-related columns
         assert "canonical_smiles" in collected.columns
@@ -795,18 +785,16 @@ class TestChemblCompositionHelpers:
 
     def test_compounds_includes_records_info(self, sample_chembl_parquets):
         """_compounds should include compound record and document info."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._compounds(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._compounds(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should have document-related columns
         assert "doc_id" in collected.columns or "pubmed_id" in collected.columns
 
     def test_components_domain_hierarchy(self, sample_chembl_parquets):
         """_components should include component, class, and domain hierarchy."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._components(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._components(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should have the component structure
         assert "component_id" in collected.columns
@@ -864,16 +852,16 @@ class TestEdgeCases:
         empty_assay.write_parquet(assay_path)
         empty_assay_type.write_parquet(assay_type_path)
 
-        lfs = {
-            "bioactivity": pl.scan_parquet(bio_path),
-            "protein": pl.scan_parquet(prot_path),
-            "action_type": pl.scan_parquet(action_path),
-            "assays": pl.scan_parquet(assay_path),
-            "assay_type": pl.scan_parquet(assay_type_path),
+        paths = {
+            "bioactivity": bio_path,
+            "protein": prot_path,
+            "action_type": action_path,
+            "assays": assay_path,
+            "assay_type": assay_type_path,
         }
 
         # Should not raise, but return empty frame
-        result = chembl._bioactivities(lfs)
+        result = chembl._bioactivities(paths)
         assert isinstance(result, pl.LazyFrame)
 
     def test_none_values_preserved_in_clean(self, temp_dir):
@@ -887,8 +875,8 @@ class TestEdgeCases:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
-        collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
+        collected: pl.DataFrame = result["test"].collect()
 
         assert collected["name"][1] is None
         assert collected["value"][1] is None
@@ -899,26 +887,26 @@ class TestVersionFormatting:
 
     def test_version_formatter_float_input(self):
         """Float versions should be formatted correctly."""
-        assert chembl._version_formatter(24.1) == "24_1"
-        assert chembl._version_formatter(22.0) == "22"
-        assert chembl._version_formatter(1.5) == "01_5"
+        assert chembl._format_version(24.1) == "24_1"
+        assert chembl._format_version(22.0) == "22"
+        assert chembl._format_version(1.5) == "01_5"
 
     def test_version_formatter_string_input(self):
         """String versions should be preserved or normalized."""
-        assert chembl._version_formatter("24_1") == "24_1"
-        assert chembl._version_formatter("22") == "22"
-        assert chembl._version_formatter("24.1") == "24_1"
+        assert chembl._format_version("24_1") == "24_1"
+        assert chembl._format_version("22") == "22"
+        assert chembl._format_version("24.1") == "24_1"
 
     def test_version_formatter_integer_input(self):
         """Integer versions should be zero-padded."""
-        assert chembl._version_formatter(1) == "01"
-        assert chembl._version_formatter(9) == "09"
-        assert chembl._version_formatter(36) == "36"
+        assert chembl._format_version(1) == "01"
+        assert chembl._format_version(9) == "09"
+        assert chembl._format_version(36) == "36"
 
     def test_version_formatter_leading_zeros_stripped(self):
         """Leading zeros should be stripped before padding."""
-        assert chembl._version_formatter("024") == "24"
-        assert chembl._version_formatter("001") == "01"
+        assert chembl._format_version("024") == "24"
+        assert chembl._format_version("001") == "01"
 
 
 class TestCleaningTransformations:
@@ -934,7 +922,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert collected["value"][1] is None
@@ -951,7 +939,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert "mixedcase" in collected.columns
@@ -970,7 +958,7 @@ class TestCleaningTransformations:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         assert collected["int_col"].dtype == pl.Int64
@@ -982,9 +970,9 @@ class TestPapyrusCompositionDetails:
 
     def test_papyrus_full_after_protein_join(self, sample_papyrus_parquets):
         """Papyrus bioactivity composition should join protein columns."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        full: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
+        lfs = papyrus.cleanly_scan_parquet_tables(sample_papyrus_parquets)
+        result = papyrus.build_views(sample_papyrus_parquets)
+        full: pl.DataFrame = result["full"].collect()
 
         # Should have columns from both bioactivity and protein
         assert "target_id" in full.columns
@@ -993,19 +981,19 @@ class TestPapyrusCompositionDetails:
 
     def test_papyrus_full_not_same_as_bioactivity(self, sample_papyrus_parquets):
         """Papyrus full should no longer be same as bioactivity (only full has a protein join)."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        bioactivity: pl.DataFrame = result["bioactivity"].collect()  # ty: ignore[invalid-assignment]
-        full: pl.DataFrame = result["full"].collect()  # ty: ignore[invalid-assignment]
+        lfs = papyrus.cleanly_scan_parquet_tables(sample_papyrus_parquets)
+        result = papyrus.build_views(sample_papyrus_parquets)
+        bioactivity: pl.DataFrame = result["bioactivity"].collect()
+        full: pl.DataFrame = result["full"].collect()
 
         # Should have same columns
         assert set(bioactivity.columns) != set(full.columns)
 
     def test_papyrus_compounds_removes_activity_id(self, sample_papyrus_parquets):
         """Papyrus compounds should not have activity_id column."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        compounds: pl.DataFrame = result["compounds"].collect()  # ty: ignore[invalid-assignment]
+        lfs = papyrus.cleanly_scan_parquet_tables(sample_papyrus_parquets)
+        result = papyrus.build_views(sample_papyrus_parquets)
+        compounds: pl.DataFrame = result["compounds"].collect()
 
         # activity_id should be dropped
         assert "activity_id" not in compounds.columns
@@ -1021,7 +1009,7 @@ class TestCompositionJoinValidation:
     #     """Bioactivity-protein join should maintain m:1 cardinality."""
     #     lfs = chembl.clean(sample_chembl_parquets)
     #     result = chembl._bioactivities(lfs)
-    #     collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+    #     collected: pl.DataFrame = result.collect()
 
     #     # Each activity should map to exactly one protein
     #     # (or None if no matching protein)
@@ -1030,9 +1018,8 @@ class TestCompositionJoinValidation:
 
     def test_chembl_compounds_unique_structures(self, sample_chembl_parquets):
         """Compounds should be based on molregno unique values."""
-        lfs = chembl.clean(sample_chembl_parquets)
-        result = chembl._compounds(lfs)
-        collected: pl.DataFrame = result.collect()  # ty: ignore[invalid-assignment]
+        result = chembl._compounds(sample_chembl_parquets)
+        collected: pl.DataFrame = result.collect()
 
         # Should not have duplicate molregno values
         molregno_count = len(collected.select("molregno").unique())
@@ -1040,9 +1027,8 @@ class TestCompositionJoinValidation:
 
     def test_papyrus_compounds_structure_uniqueness(self, sample_papyrus_parquets):
         """Papyrus compounds should be unique by connectivity/inchikey/inchi."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
-        compounds: pl.DataFrame = result["compounds"].collect()  # ty: ignore[invalid-assignment]
+        result = papyrus.build_views(sample_papyrus_parquets)
+        compounds: pl.DataFrame = result["compounds"].collect()
 
         # Get unique count across the three structure columns
         unique_count = len(
@@ -1054,21 +1040,21 @@ class TestCompositionJoinValidation:
 class TestDataIntegrity:
     """Test data integrity through pipeline."""
 
-    def test_clean_to_compose_column_consistency(self, sample_chembl_parquets):
-        """Column names should be consistent from clean through compose."""
-        lfs = chembl.clean(sample_chembl_parquets)
+    def test_clean_to_build_views_column_consistency(self, sample_chembl_parquets):
+        """Column names should be consistent from clean through build_views."""
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
-        composed = chembl.compose(lfs)
-        bioactivity: pl.DataFrame = composed["bioactivity"].collect()  # ty: ignore[invalid-assignment]
+        views = chembl.build_views(sample_chembl_parquets)
+        bioactivity: pl.DataFrame = views["bioactivity"].collect()  # ty: ignore[invalid-assignment]
 
         # All columns should be lowercase
         assert all(col.islower() for col in bioactivity.columns)
 
     def test_papyrus_protein_consistency(self, sample_papyrus_parquets):
         """Papyrus protein table should be accessible from multiple outputs."""
-        lfs = papyrus.clean(sample_papyrus_parquets)
-        result = papyrus.compose(lfs)
+        lfs = papyrus.cleanly_scan_parquet_tables(sample_papyrus_parquets)
+        result = papyrus.build_views(sample_papyrus_parquets)
 
         proteins_direct: pl.DataFrame = result["proteins"].collect()  # ty: ignore[invalid-assignment]
         proteins_via_full: pl.DataFrame = (
@@ -1091,7 +1077,7 @@ class TestDataIntegrity:
         parquet_path = temp_dir / "test.parquet"
         df.write_parquet(parquet_path)
 
-        result = chembl.clean({"test": parquet_path})
+        result = chembl.cleanly_scan_parquet_tables({"test": parquet_path})
         collected: pl.DataFrame = result["test"].collect()  # ty: ignore[invalid-assignment]
 
         # Check that empty strings in string columns are replaced

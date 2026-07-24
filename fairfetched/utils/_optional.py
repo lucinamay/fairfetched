@@ -1,7 +1,7 @@
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 try:
-    from tqdm import (  # ty: ignore[unresolved-import,unused-ignore-comment] # ty: ignore[unused-ignore-comment]
+    from tqdm import (
         tqdm as tqdm_track,
     )
 except ImportError:
@@ -43,7 +43,7 @@ try:
         disable: bool = False,
         show_speed: bool = True,
     ) -> Iterable[ProgressType]:
-        columns: list["ProgressColumn"] = (
+        columns: list[ProgressColumn] = (
             [TextColumn("[progress.description]{task.description}")]
             if description
             else []

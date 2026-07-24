@@ -1,22 +1,21 @@
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from types import ModuleType
-from typing import Tuple
 
 from polars import LazyFrame
 
-import fairfetched.get.chembl as chembl
-import fairfetched.get.papyrus as papyrus
+from fairfetched.get import chembl, papyrus
 from fairfetched.utils import BASE_DIR
-from fairfetched.utils.typing import ComposedLFDict, DatasetGetModule
+from fairfetched.utils.typing import BioactivityDBViews, DatasetGetModule
 
 
 @dataclass(frozen=True)
 class _Base:
+    """lightweight wrapper serving as the main point for a united API per database"""
+
     version: str
     raw_paths: dict[str, Path]
-    consolidated_paths: dict[str, Path]
+    parquet_paths: dict[str, Path]
     dir: Path
     module: DatasetGetModule
 
@@ -38,33 +37,33 @@ class _Base:
     @cached_property
     def sources(self) -> dict[str, str]:
 
-        sources = self.module.get_sources(self.version)
+        sources = self.module.source_urls(self.version)
         return sources
 
     @property
     def lfs(self) -> dict[str, LazyFrame]:
-        return self.module.clean(self.consolidated_paths)
+        return self.module.cleanly_scan_parquet_tables(self.parquet_paths)
 
-    def compose(self) -> ComposedLFDict:
-        return self.module.compose(self.lfs)
+    @property
+    def views(self) -> BioactivityDBViews:
+        return self.module.build_views(self.parquet_paths)
 
     @property
     def bioactivity(self) -> LazyFrame:
-        return self.compose()["bioactivity"]
+        return self.views["bioactivity"]
 
     @property
     def compounds(self) -> LazyFrame:
-        return self.compose()["compounds"]
+        return self.views["compounds"]
 
     @classmethod
-    @cached_property
-    def available_versions(cls) -> Tuple[str]:
+    def available_versions(cls) -> tuple[str, ...]:
         return cls.module.available_versions()
 
 
 @dataclass(frozen=True)
 class Chembl(_Base):
-    module: ModuleType = chembl
+    module: DatasetGetModule = chembl
 
     @staticmethod
     def get_available_versions():
@@ -72,7 +71,7 @@ class Chembl(_Base):
 
     @cached_property
     def activity(self) -> LazyFrame:
-        return self.compose()["bioactivity"]
+        return self.views["bioactivity"]
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -81,22 +80,25 @@ class Chembl(_Base):
     @classmethod
     def from_version(
         cls,
-        version: str | int | float,
+        version: str | int | float,  # ruff: ignore[PYI041]
         root_dir: Path | str = f"{BASE_DIR}/chembl",
+        force: bool = False,
     ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
-        version = chembl._version_formatter(version)
+        version = chembl._format_version(version)
         dir = Path(root_dir) / version
 
-        raw_paths: dict[str, Path] = chembl.ensure_raw(version, raw_dir=dir / "raw")
+        raw_paths: dict[str, Path] = chembl.ensure_raw_files(
+            version, raw_dir=dir / "raw", force=force
+        )
 
-        consolidated_paths = chembl.ensure_consolidated(
-            raw_paths, consolidated_dir=dir / "consolidated"
+        parquet_paths = chembl.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
         )
         return Chembl(
             version=version,
             raw_paths=raw_paths,
-            consolidated_paths=consolidated_paths,
+            parquet_paths=parquet_paths,
             dir=dir,
             module=cls.module,
         )
@@ -105,13 +107,14 @@ class Chembl(_Base):
     def from_latest(
         cls,
         root_dir: Path | str = f"{BASE_DIR}/chembl",
+        force: bool = False,
     ) -> "Chembl":
-        return cls.from_version(version=chembl.latest(), root_dir=root_dir)
+        return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
 @dataclass(frozen=True)
 class Papyrus(_Base):
-    module: ModuleType = papyrus
+    module: DatasetGetModule = papyrus
 
     @staticmethod
     def get_available_versions():
@@ -119,13 +122,13 @@ class Papyrus(_Base):
 
     @property
     def proteins(self) -> LazyFrame:
-        return self.compose()["proteins"]
+        return self.views["proteins"]
 
     @property
     def full_data(self) -> LazyFrame:
         """all data (bioactivity + protein data),
         composed into one flat tabular format LazyFrame"""
-        return self.compose()["full"]
+        return self.views["full"]
 
     @classmethod
     def from_version(
@@ -135,14 +138,16 @@ class Papyrus(_Base):
     ) -> "Papyrus":
         """Downloads Chembl for version if not yet present in the given cache directory"""
         dir = Path(root_dir) / version
-        raw_paths: dict[str, Path] = papyrus.ensure_raw(version, raw_dir=dir / "raw")
-        consolidated_paths: dict[str, Path] = papyrus.ensure_consolidated(
-            raw_paths, consolidated_dir=dir / "consolidated"
+        raw_paths: dict[str, Path] = papyrus.ensure_raw_files(
+            version, raw_dir=dir / "raw"
+        )
+        parquet_paths: dict[str, Path] = papyrus.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
         )
         return Papyrus(
             version=version,
             raw_paths=raw_paths,
-            consolidated_paths=consolidated_paths,
+            parquet_paths=parquet_paths,
             dir=dir,
             module=cls.module,
         )
@@ -157,6 +162,6 @@ class Papyrus(_Base):
 
 if __name__ == "__main__":
     p = Papyrus.from_latest()
-    p.compose()
+    p.views["proteins"]
 
     p.lfs["proteins"]

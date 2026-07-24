@@ -47,19 +47,25 @@ def lowercase_columns(df: pl.LazyFrame) -> pl.LazyFrame:
 
 def _sqlite_tables(db_path: str | Path) -> list[str]:
     with sqlite3.connect(db_path) as conn:
-        return (
-            pl.read_database(
-                """
-                SELECT name
-                FROM sqlite_master
-                WHERE type='table' AND name NOT LIKE 'sqlite_%'
-                ORDER BY name
-                """,
-                conn,
+        try:
+            return (
+                pl.read_database(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                    ORDER BY name
+                    """,
+                    conn,
+                )
+                .get_column("name")
+                .to_list()
             )
-            .get_column("name")
-            .to_list()
-        )
+        except sqlite3.DatabaseError as e:
+            raise RuntimeError(
+                f"SQLite3 database error, db path ({db_path})."
+                f"Try deleting the file and re-downloading it. Error: {e}"
+            )
 
 
 def ensure_sqlite_db_to_parquets(
@@ -72,7 +78,7 @@ def ensure_sqlite_db_to_parquets(
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
-    tables = _sqlite_tables(db_path)
+    # tables = _sqlite_tables(db_path)
     conn = sqlite3.connect(db_path)
 
     # get user tables
@@ -119,8 +125,8 @@ def map_elements_pooled_cached(
     df = df.with_row_index("tmp_index").sort(col, "tmp_index")
     with ThreadPoolExecutor(max_workers=round((os.cpu_count() or 1) * 0.9)) as executor:
         res = list(executor.map(fnx, df.select(col).collect().get_column(col)))
-    return df.with_columns(
-        pl.Series(name=alias, values=res, return_dtype=return_dtype)
+    return (
+        df.with_columns(pl.Series(name=alias, values=res, dtype=return_dtype))
         .sort("tmp_index")
         .drop("tmp_index")
     )
@@ -132,19 +138,18 @@ def map_elements_cached(
     col: str,
     alias: str | None,
     return_dtype: pl.DataType | pl.DataTypeExpr | None = None,
-    suffix: str = "_right",
     **kwargs,
 ) -> pl.LazyFrame:
-    if not isinstance(df.select(col).collect_schema().dtypes()[0], Hashable):
-        raise ValueError(f"can only map cached for hashable items, not {type(first)}")
-    fnx = lru_cache(1)(cached_fnx)
+    if not isinstance(first := df.select(col).collect_schema().dtypes()[0], Hashable):
+        raise TypeError(f"can only map cached for hashable items, not {first}")
+    fnx = lru_cache(1)(function)
     return (
         df.with_row_index("tmp_index")
         .sort(col)
         .with_columns(
             pl.col(col)
             .map_elements(fnx, **kwargs, return_dtype=return_dtype)
-            .alias(alias)
+            .alias(alias or col)
         )
         .sort("tmp_index")
         .drop("tmp_index")

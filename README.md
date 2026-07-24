@@ -1,16 +1,20 @@
 # fairfetched
-data APIs for reproducible data fetching in cheminformatics in line with FAIR principles
 
-# installation 
+data APIs for reproducible data fetching in cheminformatics in line with FAIR principles.
+the tool is designed such that all raw data is downloaded and kept in one central place (i.e. CHEMBL 37 as the original .db files), and the user has a fast, lightweight, intuitive API to filter / query the data as required for any particular project.
+
+# installation
+
 you can install this package through
 `uv add fairfetched` (recommended)
 
 or if you do not use the uv package manager:
 `pip install fairfetched`
 
-
 # examples
+
 you can download Chembl or Papyrus through:
+
 ```python
 from fairfetched.get import Chembl, Papyrus
 mychembl = Chembl.from_latest() # this downloads Chembl raw files + extracts parquet files to wherever you
@@ -21,22 +25,25 @@ mychembl = Chembl.from_latest() # this downloads Chembl raw files + extracts par
 mychembl.lfs                  # a dictionary of all chembl files in polars LazyFrame format, scanned directly from the extracted .parquet files
 
 
-mychembl.consolidated_paths   # the paths to the parquet-converted tabular data files in the Chembl .db file
+mychembl.parquet_paths   # the paths to the parquet-converted tabular data files in the Chembl .db file
 
 mychembl.raw_paths            # the paths to the raw chembl file as downloaded from Chembl. currently does include an uncompressed .db file
 
 mychembl.compounds            # NOT YET IMPLEMENTED !! convenience alias for mychembl.compose()["compounds"], which uses mychembl.lfs LazyFrame joins to obtain an intuitive join of the data.
-                              # from there, you can 
+                              # from there, you can
 ```
 
 ### examples of how to use the LazyFrames:
 
 #### checking which columns+datatypes are in the file, so that you can choose to join them:
+
 ```python
 >>> mychembl.lfs["activities"].collect_schema()
 Schema({'activity_id': Int64, 'assay_id': Int64, 'doc_id': Int64, 'record_id': Int64, 'molregno': Int64, 'standard_relation': String, 'standard_value': Float64, 'standard_units': String, 'standard_flag': Int64, 'standard_type': String, 'activity_comment': String, 'data_validity_comment': String, 'potential_duplicate': Int64, 'pchembl_value': Float64, 'bao_endpoint': String, 'uo_units': String, 'qudt_units': String, 'toid': Int64, 'upper_value': Float64, 'standard_upper_value': Null, 'src_id': Int64, 'type': String, 'relation': String, 'value': Float64, 'units': String, 'text_value': String, 'standard_text_value': String, 'action_type': String})
 ```
+
 #### selecting all entries based on doc_id:
+
 ```python
 >>> mychembl.lfs["activities"].filter(doc_id=89530).drop_nulls("units").collect()
 shape: (107, 28)
@@ -60,6 +67,7 @@ shape: (107, 28)
 ```
 
 #### adding compound structure info to the activities on molregno
+
 ```python
 >>> mychembl.lfs["activities"].join(mychembl.lfs["compound_structures"],on="molregno",how="left",validate="m:1").head().collect()
 shape: (5, 32)
@@ -92,27 +100,27 @@ shape: (5, 32)
 ```
 
 #### move it to pandas for direct drop-in use (if you really want pandas...)
+
 ideally as far down the line after you complete all filtering, you call `.collect().to_pandas()` (see polars documentation for more info)
+
 ```
 mychembl.lfs["activities"].collect().to_pandas()
 ```
 
-
-
-
 # roadmap
+
 - [ ] papyrus database support
-  - [x] papyrus latest version download
-  - [x] simple nested filtering
-  - [ ] efficient nested filtering
-  - [ ] all-version support
-  - [ ] built-in pivots
+    - [x] papyrus latest version download
+    - [x] simple nested filtering
+    - [ ] efficient nested filtering
+    - [ ] all-version support
+    - [ ] built-in pivots
 - [ ] chembl database support
-  - [x] database to tables (parquet)
-  - [ ] intuitive pre-merged flat files
-  - [ ] database visualisation
-  - [ ] remove the need for storing uncompressed .db
-- [ ] reproducion from downloaded raw file 
+    - [x] database to tables (parquet)
+    - [ ] intuitive pre-merged flat files
+    - [ ] database visualisation
+    - [ ] remove the need for storing uncompressed .db
+- [ ] reproducion from downloaded raw file
 - [ ] reproducible molecular (and protein?) standardisation
 - [ ] automated time-url logging and manifest files
 - [ ] well-organised logging

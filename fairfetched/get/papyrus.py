@@ -16,7 +16,7 @@ from fairfetched.utils import (
     lowercase_columns,
     scan_tsvxz,
 )
-from fairfetched.utils.typing import ComposedLFDict
+from fairfetched.utils.typing import BioactivityDBViews
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
     "05.6": {
@@ -42,11 +42,11 @@ def latest() -> str:
     return available_versions()[-1]
 
 
-def get_sources(version: str) -> dict[str, str]:
+def source_urls(version: str) -> dict[str, str]:
     return PAPYRUS_VERSIONS[str(version)]
 
 
-def ensure_raw(
+def ensure_raw_files(
     version: str, raw_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
     """Download if missing, return path to raw file."""
@@ -56,26 +56,24 @@ def ensure_raw(
 
     return {
         name: ensure_url(url=url, path=raw_dir / f"{name}{file_suffix_from_url(url)}")
-        for name, url in get_sources(version).items()
+        for name, url in source_urls(version).items()
     }
 
 
-def ensure_consolidated(
-    raw_filepath_dict: dict[str, Path],
-    consolidated_dir: Path | str | None = None,
+def ensure_parquet_tables(
+    raw_paths: dict[str, Path],
+    table_dir: Path | str | None = None,
 ) -> dict[str, Path]:
     """Downloads if missing, extracts to streamable parquets for lazy loading,
-    returns paths to raw files and consolidated files. Ignores README.txt file
+    returns paths to raw files and parquet files. Ignores README.txt file
 
-    consolidated_dir default is raw_filepath_dir.parent / "consolidated"
+    parquet_dir default is raw_filepath_dir.parent / "parquet"
 
     """
-    if consolidated_dir is None:
-        consolidated_dir = (
-            next(iter(raw_filepath_dict.values())).parent.parent / "consolidated"
-        )
-    consolidated_dir = Path(consolidated_dir)
-    consolidated_dir.mkdir(exist_ok=True, parents=True)
+    if table_dir is None:
+        table_dir = next(iter(raw_paths.values())).parent.parent / "parquet"
+    table_dir = Path(table_dir)
+    table_dir.mkdir(exist_ok=True, parents=True)
     schema_overrides = {
         "Year": pl.Int32,
         "pchembl_value_Mean": pl.Float64,
@@ -88,10 +86,10 @@ def ensure_consolidated(
     }
 
     filepath_dict = {}
-    for name, path_ in raw_filepath_dict.items():
+    for name, path_ in raw_paths.items():
         if path_.name.lower() == "readme.txt":
             continue
-        new_path = consolidated_dir / f"{path_.stem.split('.')[0]}.parquet"
+        new_path = table_dir / f"{path_.stem.split('.')[0]}.parquet"
         filepath_dict[name] = new_path
         if new_path.exists():
             continue
@@ -107,23 +105,26 @@ def ensure_consolidated(
     return filepath_dict
 
 
-def clean(consolidated_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
-    """Transform consolidated → clean, return lazy frames"""
+def cleanly_scan_parquet_tables(
+    parquet_paths: dict[str, Path],
+) -> dict[str, pl.LazyFrame]:
+    """Scan table Parquet files and apply dataset-specific column cleanup."""
 
     return {
         "protein": (
-            pl.scan_parquet(consolidated_paths["protein"])
+            pl.scan_parquet(parquet_paths["protein"])
             .pipe(lowercase_columns)
             .rename({"uniprotid": "uniprot_id"})
         ),
         "bioactivity": (
-            pl.scan_parquet(consolidated_paths["bioactivity"]).pipe(lowercase_columns)
+            pl.scan_parquet(parquet_paths["bioactivity"]).pipe(lowercase_columns)
         ),
     }
 
 
-def compose(lfs: dict[str, pl.LazyFrame]) -> ComposedLFDict:
-    """Join/combine lazy frames, returning dict"""
+def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+    """Build joined domain views from the scanned source tables."""
+    lfs = cleanly_scan_parquet_tables(parquet_paths)
     return {
         "bioactivity": lfs["bioactivity"],
         "compounds": lfs["bioactivity"]
@@ -147,9 +148,9 @@ def help() -> None:
     print("""
         Example usage:
         ```
-        raw = ensure_raw("05.7")
-        lfs = clean(raw)
-        final_lf = compose(lfs)
-        final_lf.sink_parquet("output.parquet")
+        raw = ensure_raw_files("05.7")
+        tables = cleanly_scan_parquet_tables(raw)
+        views = build_views(tables)
+        views["full"].sink_parquet("output.parquet")
         ```
         """)
