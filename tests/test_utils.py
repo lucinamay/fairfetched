@@ -1,11 +1,14 @@
+import os
 import sqlite3
 import tarfile
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from fairfetched.utils.files import ensure_untarred_sqlite as untar_sqlite
+from fairfetched.utils.storage import _get_fairfetched_home_dir
 
 
 @pytest.fixture
@@ -98,3 +101,62 @@ def test_untar_sqlite_database_content(tar_gz_archive):
     assert row_count == 2
     assert rows[0] == ("test1", 1.5)
     assert rows[1] == ("test2", 2.5)
+
+
+class TestHomeDir:
+    """Test HOME_DIR handling with tilde expansion."""
+
+    def test_fairfetched_home_with_tilde(self):
+        """Test FAIRFETCHED_HOME expands ~ correctly."""
+        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "~/fairfetched_data"}, clear=False):
+            result = _get_fairfetched_home_dir()
+            expected = Path.home() / "fairfetched_data"
+            assert result == expected
+            assert "~" not in str(result)
+
+    def test_pystow_home_with_tilde(self):
+        """Test PYSTOW_HOME expands ~ correctly."""
+        with mock.patch.dict(os.environ, {"PYSTOW_HOME": "~/pystow_data"}, clear=False):
+            # Clear FAIRFETCHED_HOME if it exists
+            env = os.environ.copy()
+            env.pop("FAIRFETCHED_HOME", None)
+            with mock.patch.dict(os.environ, env, clear=True):
+                result = _get_fairfetched_home_dir()
+                expected = Path.home() / "pystow_data"
+                assert result == expected
+                assert "~" not in str(result)
+
+    def test_fairfetched_home_precedence(self):
+        """Test FAIRFETCHED_HOME takes precedence over PYSTOW_HOME."""
+        with mock.patch.dict(
+            os.environ,
+            {"FAIRFETCHED_HOME": "~/fairfetched", "PYSTOW_HOME": "~/pystow"},
+            clear=False,
+        ):
+            result = _get_fairfetched_home_dir()
+            expected = Path.home() / "fairfetched"
+            assert result == expected
+
+    def test_default_home_dir(self):
+        """Test default HOME_DIR when neither env var is set."""
+        env = os.environ.copy()
+        env.pop("FAIRFETCHED_HOME", None)
+        env.pop("PYSTOW_HOME", None)
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = _get_fairfetched_home_dir()
+            expected = Path.home() / ".data"
+            assert result == expected
+
+    def test_absolute_path_fairfetched_home(self):
+        """Test FAIRFETCHED_HOME with absolute path (no tilde)."""
+        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "/tmp/fairfetched"}, clear=False):
+            result = _get_fairfetched_home_dir()
+            assert result == Path("/tmp/fairfetched")
+
+    def test_nested_tilde_path(self):
+        """Test nested paths with tilde."""
+        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "~/data/fairfetched/v1"}, clear=False):
+            result = _get_fairfetched_home_dir()
+            expected = Path.home() / "data/fairfetched/v1"
+            assert result == expected
+            assert "~" not in str(result)
