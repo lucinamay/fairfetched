@@ -11,10 +11,10 @@ import polars as pl
 
 from fairfetched.utils import (
     BASE_DIR,
+    decompress_and_scan_tsvxz,
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
-    scan_tsvxz,
 )
 from fairfetched.utils.typing import BioactivityDBViews
 
@@ -93,7 +93,7 @@ def ensure_parquet_tables(
         filepath_dict[name] = new_path
         if new_path.exists():
             continue
-        scan_tsvxz(
+        decompress_and_scan_tsvxz(
             path_,
             separator="\t",
             infer_schema=False,

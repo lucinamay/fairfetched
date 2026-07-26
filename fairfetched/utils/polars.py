@@ -1,6 +1,8 @@
+import atexit
 import logging
 import lzma
 import os
+import shutil
 import sqlite3
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -12,12 +14,35 @@ import polars as pl
 
 from fairfetched.utils._track import track
 
+_TEMP_FILES: list[str] = []
 
-def scan_tsvxz(path: str | Path, **kwargs) -> pl.LazyFrame:
+
+def _cleanup_temp_files():
+    for f in _TEMP_FILES:
+        if os.path.exists(f):
+            os.remove(f)
+
+
+atexit.register(_cleanup_temp_files)
+
+
+def decompress_and_scan_tsvxz(path: str | Path, **kwargs) -> pl.LazyFrame:
+    path = Path(path)
     logging.debug(f"scanning {path}")
     print(f"scanning {path}")
-    with lzma.open(str(path), "rb") as f_lzma:
-        return pl.scan_csv(f_lzma, **kwargs)
+
+    # Polars cannot lazily scan a compressed stream without buffering the entire
+    # decompressed content into memory, leading to OOM for large files.
+    # We decompress to a temporary file first to enable true lazy scanning.
+    tmp = tempfile.NamedTemporaryFile(
+        prefix=path.stem + ".", suffix=".tsv", dir=path.parent, delete=False
+    )
+    _TEMP_FILES.append(tmp.name)
+    with lzma.open(path, "rb") as f_in:
+        shutil.copyfileobj(f_in, tmp)
+    tmp.close()
+
+    return pl.scan_csv(tmp.name, **kwargs)
 
 
 def __tmpfile(true_file: Path) -> Path:
