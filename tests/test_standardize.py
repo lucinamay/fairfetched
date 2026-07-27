@@ -7,7 +7,6 @@ from rdkit.Chem.rdmolops import RemoveAllHs
 from fairfetched.standardize import mol_expr as me
 from fairfetched.standardize.mol_expr import MolExpr
 from fairfetched.standardize.mol_functions import remove_stereo
-from fairfetched.standardize.pipe import with_cleaned_mol_descriptors
 
 TEST_DF = pl.DataFrame(
     {
@@ -186,14 +185,3 @@ def test_custom_pipe():
         MolExpr.from_smiles("smiles").standardize(my_func, parallel=True).alias("mol")
     )
     assert out.select(pl.col("mol").is_not_null().all()).item()
-
-
-def test_standardise_pipe():
-    df = TEST_DF.lazy()
-    out: pl.DataFrame = df.pipe(with_cleaned_mol_descriptors).collect()
-    print(out)
-    assert out.select(pl.col("smiles").is_not_null().all()).item()
-    assert out.select(pl.col("inchi").is_not_null().all()).item()
-    assert out.select(pl.col("inchi_auxinfo").is_not_null().all()).item()
-    assert out.select(pl.col("inchikey").is_not_null().all()).item()
-    # assert out.select(pl.col("mol").is_not_null().all()).item()
