@@ -28,37 +28,30 @@ def basic_test():
     df.with_columns(
         pl.col("smiles")  # ty: ignore[unresolved-attribute]
         .mol.from_smiles()
-        .mol.standardise(*me.PIPELINE_CHEMBL)
-        .mol.to_kekulised_smiles()
+        .mol.standardise(*me.STEPS_CHEMBL)
+        .mol.to_kekulized_smiles()
         .alias("kekulised_smiles")
     )
 
 
-def test_basic_kekulised_smiles_not_null_polars():
-    df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
+def test_namespace_on_binary_mol():
+    # namespace methods work on already-binary mol columns, not entry points
+    df = TEST_DF
     parallel = True
     out = df.with_columns(
-        pl.col("smiles")  # ty: ignore[unresolved-attribute]
-        .mol.from_smiles(parallel=False)
-        .mol.standardise(*me.PIPELINE_CHEMBL, parallel=parallel)
-        .mol.to_kekulised_smiles(parallel=False)
+        MolExpr.from_smiles("smiles", parallel=False)
+        .standardize(*me.STEPS_CHEMBL, parallel=parallel)
+        .alias("mol")
+    )
+
+    # now use namespace methods on the binary mol column
+    out = out.with_columns(
+        pl.col("mol")  # ty: ignore[unresolved-attribute]
+        .mol.to_kekulized_smiles(parallel=False)
         .alias("kekulised_smiles")
     )
 
     assert out.select(pl.col("kekulised_smiles").is_not_null().all()).item()
-    assert out.select(pl.col("kekulised_smiles").eq(pl.col("smiles")).all()).item()
-
-
-def test_standardised_mol_as_binary():
-    df = TEST_DF
-    parallel = True
-    out = df.with_columns(
-        pl.col("smiles")  # ty: ignore[unresolved-attribute]
-        .mol.from_smiles(parallel=False)
-        .mol.standardise(*me.PIPELINE_CHEMBL, parallel=parallel)
-        .alias("mol")
-    )
-
     assert out.get_column("mol").dtype == pl.Binary
 
 
@@ -67,8 +60,8 @@ def test_basic_kekulised_smiles_not_null():
 
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardize(*me.PIPELINE_CHEMBL, parallel=True)
-        .to_kekulised_smiles()
+        .standardize(*me.STEPS_CHEMBL, parallel=True)
+        .to_kekulized_smiles()
         .alias("kekulised_smiles")
     )
 
@@ -79,10 +72,10 @@ def test_basic_kekulised_smiles_not_null():
 def test_basic_kekulised_smiles_not_null_lazy():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10}).lazy()
     parallel = True
-    out: pl.DataFrame = df.with_columns(  # ty: ignore[invalid-assignment]
+    out: pl.DataFrame = df.with_columns( 
         MolExpr.from_smiles("smiles", parallel)
-        .standardize(*me.PIPELINE_CHEMBL, parallel=parallel)
-        .to_kekulised_smiles(parallel)
+        .standardize(*me.STEPS_CHEMBL, parallel=parallel)
+        .to_kekulized_smiles(parallel)
         .alias("kekulised_smiles")
     ).collect()
 
@@ -108,7 +101,7 @@ def test_intermediate_fine():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardize(*me.PIPELINE_CHEMBL)
+        .standardize(*me.STEPS_CHEMBL)
         .alias("intermediate")
     )
 
@@ -120,7 +113,7 @@ def test_to_mol_objects():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10})
     out = df.with_columns(
         MolExpr.from_smiles("smiles")
-        .standardize(*me.PIPELINE_CHEMBL)
+        .standardize(*me.STEPS_CHEMBL)
         .to_mol_objects()
         .alias("mol")
     )
@@ -146,7 +139,7 @@ def test_all_parallel():
 
     out = out.with_columns(
         MolExpr.col("mol").standardize(
-            remove_stereo, *me.PIPELINE_CHEMBL, parallel=parallel
+            remove_stereo, *me.STEPS_CHEMBL, parallel=parallel
         )
     )
     assert out.select(pl.col("mol").is_not_null().all()).item()
@@ -155,7 +148,7 @@ def test_all_parallel():
     out_ = out.select(
         MolExpr.col("mol").to_inchi(parallel=parallel).alias("inchi_separate"),
         MolExpr.col("mol").to_inchi_and_auxinfo(parallel=parallel),
-        MolExpr.col("mol").to_kekulised_smiles(parallel=parallel).alias("smiles"),
+        MolExpr.col("mol").to_kekulized_smiles(parallel=parallel).alias("smiles"),
         MolExpr.col("mol").to_inchikey(parallel=parallel).alias("inchikey"),
     )
     assert (

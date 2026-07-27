@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable
 
-# from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
 import polars as pl
 
 from fairfetched.utils._track import track
@@ -28,11 +27,10 @@ from .mol_functions import (
     _smiles_to_binary,
 )
 from .pipeline import (
-    PIPELINE_CHEMBL,
-    PIPELINE_PAPYRUS,
-    PIPELINE_PAPYRUS_NOSTEREO,
+    STEPS_CHEMBL,
+    STEPS_PAPYRUS,
+    STEPS_PAPYRUS_NOSTEREO,
     MolPipeline,
-    mol_pipeline,
 )
 
 # //2 for roughly the physical cores - slightly less
@@ -95,87 +93,6 @@ def _map(
 
 
 @pl.api.register_expr_namespace("mol")
-class PlMolExpr:
-    def __init__(self, expr: pl.Expr):
-        self._expr = expr
-
-    def from_smiles(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            # lambda s: _parallel_map(_smiles_to_binary, s, pl.Binary),
-            lambda s: _map_nodedup(_smiles_to_binary, s, pl.Binary, parallel),
-            return_dtype=pl.Binary,
-            is_elementwise=not parallel,
-        )
-
-    def from_inchi(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_inchi_to_binary, s, pl.Binary, parallel),
-            return_dtype=pl.Binary,
-            is_elementwise=not parallel,
-        )
-
-    def to_smiles(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_binary_to_smiles, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
-
-    def to_inchi(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_binary_to_inchi, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
-
-    def to_inchi_and_auxinfo(self, parallel: bool = False) -> pl.Expr:
-        dtype = pl.Struct({"inchi": pl.String, "inchi_auxinfo": pl.String})
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_binary_to_inchi_and_auxinfo, s, dtype, parallel),
-            return_dtype=dtype,
-            is_elementwise=not parallel,
-        )
-
-    def to_inchikey(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_binary_to_inchikey, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
-
-    def to_kekulised_smiles(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_binary_to_kekulized_smiles, s, pl.String, parallel),
-            return_dtype=pl.String,
-            is_elementwise=not parallel,
-        )
-
-    def num_atoms(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_num_atoms, s, pl.Int32, parallel),
-            return_dtype=pl.Int32,
-            is_elementwise=not parallel,
-        )
-
-    def num_heavy_atoms(self, parallel: bool = False) -> pl.Expr:
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(_num_heavy_atoms, s, pl.Int32, parallel),
-            return_dtype=pl.Int32,
-            is_elementwise=not parallel,
-        )
-
-    def standardise(self, *steps: MolFn, parallel: bool = False) -> pl.Expr:
-        """to a mol, apply standardisation steps (mol->mol | None)"""
-        fn = mol_pipeline(*steps)
-        return self._expr.map_batches(
-            lambda s: _map_nodedup(fn, s, pl.Binary, parallel),
-            return_dtype=pl.Binary,
-            is_elementwise=not parallel,
-        )
-
-    # ... rest of namespace
-
-
 @dataclass(frozen=True)
 class MolExpr(pl.Expr):
     """Lightweight pl.Expr copy for mol-specific functionalities"""
@@ -220,11 +137,6 @@ class MolExpr(pl.Expr):
     ) -> "MolExpr":
         """Wrap an existing binary mol column."""
         return cls(pl.col(col))
-
-    # @classmethod
-    # def from_name(cls, col: str, parallel: bool = False, dedup: bool = False) -> "MolExpr":
-    #     """Wrap an existing binary mol column."""
-    #     return cls(pl.col(col))
 
     @classmethod
     def from_col_infer(
@@ -288,7 +200,7 @@ class MolExpr(pl.Expr):
     def to_inchikey(self, parallel: bool = False) -> pl.Expr:
         return self._apply(_binary_to_inchikey, pl.String, parallel)
 
-    def to_kekulised_smiles(self, parallel: bool = False) -> pl.Expr:
+    def to_kekulized_smiles(self, parallel: bool = False) -> pl.Expr:
         return self._apply(_binary_to_kekulized_smiles, pl.String, parallel)
 
     def to_inchi_and_auxinfo(self, parallel: bool = False) -> pl.Expr:
@@ -341,43 +253,9 @@ class MolExpr(pl.Expr):
         return self._apply(function, return_dtype, parallel, dedup)
 
 
-# CHEMBL_PIPELINE = (remove_stereo, chembl_standardise, valid_inchi)
 __all__ = [
-    PIPELINE_CHEMBL,
-    PIPELINE_PAPYRUS,
-    PIPELINE_PAPYRUS_NOSTEREO,
-    PlMolExpr,
-    MolExpr,
+    "STEPS_CHEMBL",
+    "STEPS_PAPYRUS",
+    "STEPS_PAPYRUS_NOSTEREO",
+    "MolExpr",
 ]
-
-
-# ================ experimental ========================
-
-
-def _make_batch_mapper(fn, return_dtype, parallel: bool):
-    if parallel:
-
-        def mapper(s: pl.Series) -> pl.Series:
-            with ProcessPoolExecutor(_N_WORKERS, mp_context=_CTX) as pool:
-                out = list(pool.map(fn, s.to_list(), chunksize=256))
-            return pl.Series(s.name, out, dtype=return_dtype)
-
-        is_elementwise = False
-    else:
-
-        def mapper(s: pl.Series) -> pl.Series:
-            return pl.Series(s.name, tuple(map(fn, s)), dtype=return_dtype)
-
-        is_elementwise = True
-
-    return mapper, is_elementwise
-
-
-def _map_directly(expr: pl.Expr, fn, return_dtype, parallel: bool) -> pl.Expr:
-    mapper, is_elementwise = _make_batch_mapper(fn, return_dtype, parallel)
-
-    return expr.map_batches(
-        mapper,
-        return_dtype=return_dtype,
-        is_elementwise=is_elementwise,
-    )

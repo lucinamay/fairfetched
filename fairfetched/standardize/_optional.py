@@ -5,7 +5,7 @@ try:
         get_parent_mol as chembl_get_parent_mol,
     )
     from chembl_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
-        standardize_mol as chembl_standardize,
+        standardize_mol as _chembl_standardize,
     )
 except ImportError as e:
     lg.warning("""
@@ -24,7 +24,7 @@ except ImportError as e:
             """)
         raise CHEMBL_IMPORT_ERROR
 
-    def chembl_standardize(mol):
+    def _chembl_standardize(mol):
         """placeholder for chembl_structure_pipeline.chembl_standardize in case
         the import doesn't work.
 
