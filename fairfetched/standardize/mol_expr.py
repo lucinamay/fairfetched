@@ -58,14 +58,14 @@ def _map_nodedup(
                 results = list(
                     track(
                         pool.map(fn, series.to_list(), chunksize=256),
-                        desc=fn.__name__,
+                        desc=getattr(fn, "__name__", ""),
                         total=len(series),
                     )
                 )
             return pl.Series(series.name, results, dtype=return_dtype)
-        except Exception:
-            logging.warning(
-                "'parallel' execution did not work, resorting to native polars map_batches"
+        except Exception as e:
+            logging.exception(
+                f"'parallel' execution did not work with exception: {e}, resorting to native polars map_batches. "
                 "consider passing parallel=False, as this at least allows subdivision into batches"
             )
     return pl.Series(

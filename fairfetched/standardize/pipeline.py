@@ -11,6 +11,10 @@ from .mol_functions import MolFn, chembl_standardize, remove_stereo
 class MolPipeline:
     steps: Iterable[MolFn]
 
+    @property
+    def __name__(self) -> str:
+        return "MolPipeline(" + ",".join(getattr(s, "__name__", "?") for s in self.steps) + ")"
+
     def __call__(self, b: bytes | None) -> bytes | None:
         if b is None:
             return None
