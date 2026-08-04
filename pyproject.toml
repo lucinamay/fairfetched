@@ -38,7 +38,7 @@ members = [
 ]
 
 [tool.uv.sources]
-fairfetched = { workspace = true, editable = true }
+fairfetched = { workspace = true }
 
 [dependency-groups]
 dev = [
