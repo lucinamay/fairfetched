@@ -26,6 +26,11 @@ dev = [
 ]
 
 
+[tool.pytest.ini_options]
+# -rxX reports every xfail/xpass + reason (c.f. one count) so known bugs with xfail(strict=True) are visible
+addopts = "-rxX"
+
+
 [tool.setuptools]
 package-dir = {"" = "."}
 
