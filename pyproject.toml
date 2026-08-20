@@ -5,7 +5,7 @@ description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "polars>=1.38.1",
+    "polars>=1.35.2",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +26,11 @@ dev = [
 ]
 
 
+[tool.pytest.ini_options]
+# -rxX reports every xfail/xpass + reason (c.f. one count) so known bugs with xfail(strict=True) are visible
+addopts = "-rxX"
+
+
 [tool.setuptools]
 package-dir = {"" = "."}
 
@@ -38,13 +43,14 @@ members = [
 ]
 
 [tool.uv.sources]
-fairfetched = { workspace = true, editable = true }
+fairfetched = { workspace = true }
 
 [dependency-groups]
 dev = [
     "chembl-structure-pipeline>=1.2.4",
     "fairfetched",
     "papyrus-structure-pipeline>=0.0.5",
+    # "polars[gpu]>=1.35.2",
     "pytest>=9.0.2",
     "rdkit>=2025.9.6",
     "rust-just>=1.46.0",

@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import logging
-from functools import wraps
-from typing import Callable, ParamSpec, TypeVar
+from dataclasses import dataclass, fields
+from functools import lru_cache, wraps
+from typing import Any, Callable, ParamSpec, TypeVar
+
+from numpy import uint8
+from numpy.typing import NDArray
 
 # from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
 from rdkit import Chem
-from rdkit.Chem import Mol, MolFromInchi, MolToInchi, RemoveStereochemistry
+from rdkit.Chem import (
+    InchiToInchiKey,
+    Mol,
+    MolFromInchi,
+    MolToInchi,
+    MolToInchiAndAuxInfo,
+    RemoveStereochemistry,
+)
+from rdkit.Chem.rdFingerprintGenerator import FingerprintGenerator64, GetMorganGenerator
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 
+from ._optional import _chembl_standardize
+
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
-from ._optional import _papyrus_standardize, chembl_standardize
+from ._optional import _papyrus_standardize as _papyrus_standardize_impl
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -50,6 +64,15 @@ safe_step = safe_step_function()
 
 
 MolFn = Callable[[Mol], Mol | None]
+BinaryMolFn = Callable[[bytes], bytes | None]
+BinaryToAnyFn = Callable[[bytes | None], Any | None]
+
+
+@lru_cache(maxsize=1)
+def _get_morgan_generator(
+    radius: int, fp_size: int, **kwargs
+) -> FingerprintGenerator64:
+    return GetMorganGenerator(radius=radius, fpSize=fp_size, **kwargs)
 
 
 @safe_step
@@ -67,13 +90,13 @@ def via_inchi(mol: Mol) -> Mol | None:
 
 
 @safe_step
-def chembl_standardise(mol, *args, **kwargs):
-    return chembl_standardize(mol, *args, **kwargs)
+def chembl_standardize(mol, *args, **kwargs):
+    return _chembl_standardize(mol, *args, **kwargs)
 
 
 @safe_step
-def papyrus_standardise(mol, *args, **kwargs):
-    return _papyrus_standardize(mol, *args, **kwargs)
+def papyrus_standardize(mol, *args, **kwargs):
+    return _papyrus_standardize_impl(mol, *args, **kwargs)
 
 
 @safe_step
@@ -118,7 +141,7 @@ def _inchi_to_binary(s: str) -> bytes | None:
 
 @safe_step
 def _binary_to_smiles(b: bytes | None) -> str | None:
-    return MolToSmiles(Mol(b))
+    return MolToSmiles(Mol(b))  # ty: ignore[no-matching-overload]
 
 
 @safe_step
@@ -133,24 +156,59 @@ def _binary_to_inchi(b: bytes | None) -> str | None:
 
 @safe_step
 def _binary_to_inchi_and_auxinfo(b: bytes | None) -> str | None:
-    return Chem.inchi.MolToInchiAndAuxInfo(Mol(b))
+    return Chem.inchi.MolToInchiAndAuxInfo(Mol(b))  # ty: ignore[no-matching-overload]
 
 
 @safe_step
 def _binary_to_inchikey(b: bytes | None) -> str | None:
-    return Chem.inchi.MolToInchiKey(Mol(b))
+    return Chem.inchi.MolToInchiKey(Mol(b))  # ty: ignore[no-matching-overload]
+
+
+@dataclass(frozen=True)
+class Descriptors:
+    inchi: str
+    inchi_auxinfo: str
+    inchikey: str
+    smiles: str
+
+    @classmethod
+    def dataclass_schema(cls) -> dict[str, type | str | Any]:
+        # hints = get_type_hints(cls)
+        return {f.name: str for f in fields(cls)}
+
+
+@safe_step
+def _binary_to_descriptors(b: bytes | None) -> Descriptors | None:
+    """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as 'smiles')"""
+    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]
+    inchi, auxinfo = MolToInchiAndAuxInfo(mol)
+    return Descriptors(
+        inchi=inchi,
+        inchi_auxinfo=auxinfo,
+        inchikey=InchiToInchiKey(inchi),
+        smiles=MolToSmiles(mol, kekuleSmiles=True, isomericSmiles=False),
+    )
+
+
+@safe_step
+def _binary_to_morgan_array(
+    b: bytes | None, radius: int, fp_size: int, **kwargs
+) -> NDArray[uint8] | None:
+    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]
+    gen = _get_morgan_generator(radius=radius, fp_size=fp_size, **kwargs)
+    return gen.GetFingerprintAsNumPy(mol)
 
 
 @safe_step
 def _binary_to_mol(b: bytes | None) -> Mol | None:
-    return Mol(b)
+    return Mol(b)  # ty: ignore[no-matching-overload]
 
 
 @safe_step
 def _num_atoms(b: bytes | None) -> int | None:
-    return Mol(b).GetNumAtoms()
+    return Mol(b).GetNumAtoms()  # ty: ignore[no-matching-overload]
 
 
 @safe_step
 def _num_heavy_atoms(b: bytes | None) -> int | None:
-    return Mol(b).GetNumHeavyAtoms()
+    return Mol(b).GetNumHeavyAtoms()  # ty: ignore[no-matching-overload]
