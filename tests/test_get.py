@@ -255,7 +255,6 @@ def sample_papyrus_parquets(temp_dir):
     bioactivity_df = pl.DataFrame(
         {
             "activity_id": [1, 2, 3],
-            "connectivity": ["CCO", "CCC", "CCCC"],
             "inchikey": [
                 "LFQSCWFLJHTTHZ-UHFFFAOYSA-N",
                 "LFQSCWFLJHTTHZ-UHFFFAOYSA-O",
