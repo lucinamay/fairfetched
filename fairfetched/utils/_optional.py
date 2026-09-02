@@ -4,7 +4,10 @@ try:
     from tqdm import (
         tqdm as tqdm_track,
     )
+
+    HAS_TQDM = True
 except ImportError:
+    HAS_TQDM = False
 
     def tqdm_track(iterable, *args, **kwargs):
         return iter(iterable)
@@ -24,6 +27,8 @@ try:
         TimeElapsedColumn,
         TimeRemainingColumn,
     )
+
+    HAS_RICH = True
 
     def rich_track(
         sequence: Iterable[ProgressType],
@@ -82,6 +87,7 @@ try:
             )
 
 except ImportError:
+    HAS_RICH = False
 
     def rich_track(iterable, *args, **kwargs):
         return iter(iterable)
@@ -92,7 +98,9 @@ try:
         running_in_notebook as in_marimo,
     )
 
+    HAS_MARIMO = True
 except ImportError:
+    HAS_MARIMO = False
 
     def in_marimo():
         return False
