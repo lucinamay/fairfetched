@@ -810,8 +810,10 @@ class TestChemblDataClass:
         assert isinstance(lfs, dict)
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
-    def test_chembl_build_views_returns_dict(self, temp_dir, sample_chembl_parquets):
-        """Chembl.build_views() should return dict with expected keys."""
+    def test_chembl_view_exposes_bioactivity_and_compounds(
+        self, temp_dir, sample_chembl_parquets
+    ):
+        """Chembl.view exposes the joined views as LazyFrames."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
@@ -819,13 +821,11 @@ class TestChemblDataClass:
             dir=temp_dir,
             module=chembl,
         )
-        views = obj.views
-        assert isinstance(views, dict)
-        assert "bioactivity" in views
-        assert "compounds" in views
+        assert isinstance(obj.view.bioactivity, pl.LazyFrame)
+        assert isinstance(obj.view.compounds, pl.LazyFrame)
 
-    def test_chembl_bioactivity_property(self, temp_dir, sample_chembl_parquets):
-        """Chembl.bioactivity should return LazyFrame."""
+    def test_chembl_raw_table_attribute(self, temp_dir, sample_chembl_parquets):
+        """Chembl exposes raw source tables as attributes."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
@@ -833,18 +833,8 @@ class TestChemblDataClass:
             dir=temp_dir,
             module=chembl,
         )
-        assert isinstance(obj.bioactivity, pl.LazyFrame)
-
-    def test_chembl_compounds_property(self, temp_dir, sample_chembl_parquets):
-        """Chembl.compounds should return LazyFrame."""
-        obj = Chembl(
-            version="36",
-            raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            parquet_paths=sample_chembl_parquets,
-            dir=temp_dir,
-            module=chembl,
-        )
-        assert isinstance(obj.compounds, pl.LazyFrame)
+        assert isinstance(obj.activities, pl.LazyFrame)
+        assert obj.activities is obj.lfs["activities"]
 
     def test_chembl_string_representation(self, temp_dir, sample_chembl_parquets):
         """Chembl should have meaningful string representation."""
@@ -896,11 +886,10 @@ class TestPapyrusDataClass:
             dir=temp_dir,
             module=papyrus,
         )
-        views = obj.views
-        assert isinstance(views, dict)
-        assert "bioactivity" in views
-        assert "compounds" in views
-        assert "proteins" in views
+        assert isinstance(obj.view.bioactivity, pl.LazyFrame)
+        assert isinstance(obj.view.compounds, pl.LazyFrame)
+        assert isinstance(obj.view.proteins, pl.LazyFrame)
+        assert isinstance(obj.view.full, pl.LazyFrame)
 
     def test_papyrus_lfs_returns_lazy_frames(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.lfs should return dict of LazyFrames."""
@@ -916,7 +905,7 @@ class TestPapyrusDataClass:
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
     def test_papyrus_proteins_property(self, temp_dir, sample_papyrus_parquets):
-        """Papyrus.proteins should return protein LazyFrame."""
+        """Papyrus.view.proteins and the raw Papyrus.protein table are LazyFrames."""
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
@@ -924,7 +913,8 @@ class TestPapyrusDataClass:
             dir=temp_dir,
             module=papyrus,
         )
-        assert isinstance(obj.proteins, pl.LazyFrame)
+        assert isinstance(obj.view.proteins, pl.LazyFrame)
+        assert isinstance(obj.protein, pl.LazyFrame)
 
     def test_papyrus_is_frozen(self, temp_dir, sample_papyrus_parquets):
         """Papyrus dataclass should be frozen (immutable)."""

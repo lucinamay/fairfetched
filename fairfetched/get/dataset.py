@@ -5,8 +5,54 @@ from pathlib import Path
 from polars import LazyFrame
 
 from fairfetched.get import chembl, papyrus
+from fairfetched.get._chembl_tables import ChemblTables
+from fairfetched.get._papyrus_tables import PapyrusTables
 from fairfetched.utils import BASE_DIR
-from fairfetched.utils.typing import BioactivityDBViews, DatasetGetModule
+from fairfetched.utils.typing import DatasetGetModule
+
+
+class _View:
+    """Joined domain views, built once from the raw tables."""
+
+    def __init__(self, owner: "_Base") -> None:
+        self._views = owner.module.build_views(owner.parquet_paths)
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} available: {', '.join(self._views)}>"
+
+    @property
+    def bioactivity(self) -> LazyFrame:
+        return self._views["bioactivity"]
+
+    @property
+    def compounds(self) -> LazyFrame:
+        return self._views["compounds"]
+
+
+class _ChemblView(_View):
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+    @property
+    def components(self) -> LazyFrame:
+        return self._views["components"]
+
+
+class _PapyrusView(_View):
+    """``proteins`` and ``full`` mirror the raw Papyrus tables: Papyrus already
+    ships a near-flat schema, so these joins are close to passthrough. Use the
+    raw-table attributes (``Papyrus.protein``, ``Papyrus.bioactivity``) when you
+    want the source columns without the view's renames."""
+
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+    @property
+    def full(self) -> LazyFrame:
+        """bioactivity + protein data as one flat LazyFrame."""
+        return self._views["full"]
 
 
 @dataclass(frozen=True)
@@ -40,21 +86,13 @@ class _Base:
         sources = self.module.source_urls(self.version)
         return sources
 
-    @property
+    @cached_property
     def lfs(self) -> dict[str, LazyFrame]:
         return self.module.cleanly_scan_parquet_tables(self.parquet_paths)
 
-    @property
-    def views(self) -> BioactivityDBViews:
-        return self.module.build_views(self.parquet_paths)
-
-    @property
-    def bioactivity(self) -> LazyFrame:
-        return self.views["bioactivity"]
-
-    @property
-    def compounds(self) -> LazyFrame:
-        return self.views["compounds"]
+    @cached_property
+    def view(self) -> _View:
+        return _View(self)
 
     @classmethod
     def available_versions(cls) -> tuple[str, ...]:
@@ -62,7 +100,7 @@ class _Base:
 
 
 @dataclass(frozen=True, repr=False)
-class Chembl(_Base):
+class Chembl(_Base, ChemblTables):
     module: DatasetGetModule = chembl
 
     @staticmethod
@@ -70,8 +108,8 @@ class Chembl(_Base):
         return chembl.available_versions()
 
     @cached_property
-    def activity(self) -> LazyFrame:
-        return self.views["bioactivity"]
+    def view(self) -> _ChemblView:
+        return _ChemblView(self)
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -113,22 +151,16 @@ class Chembl(_Base):
 
 
 @dataclass(frozen=True, repr=False)
-class Papyrus(_Base):
+class Papyrus(_Base, PapyrusTables):
     module: DatasetGetModule = papyrus
 
     @staticmethod
     def get_available_versions():
         return papyrus.available_versions()
 
-    @property
-    def proteins(self) -> LazyFrame:
-        return self.views["proteins"]
-
-    @property
-    def full_data(self) -> LazyFrame:
-        """all data (bioactivity + protein data),
-        composed into one flat tabular format LazyFrame"""
-        return self.views["full"]
+    @cached_property
+    def view(self) -> _PapyrusView:
+        return _PapyrusView(self)
 
     @classmethod
     def from_version(
@@ -162,6 +194,5 @@ class Papyrus(_Base):
 
 if __name__ == "__main__":
     p = Papyrus.from_latest()
-    p.views["proteins"]
-
-    p.lfs["proteins"]
+    p.view.proteins
+    p.protein
