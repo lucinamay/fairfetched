@@ -833,8 +833,8 @@ class TestChemblDataClass:
             dir=temp_dir,
             module=chembl,
         )
-        assert isinstance(obj.activities, pl.LazyFrame)
-        assert obj.activities is obj.lfs["activities"]
+        assert isinstance(obj.tables.activities, pl.LazyFrame)
+        assert obj.tables.activities is obj.lfs["activities"]
 
     def test_chembl_string_representation(self, temp_dir, sample_chembl_parquets):
         """Chembl should have meaningful string representation."""
@@ -905,7 +905,7 @@ class TestPapyrusDataClass:
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
     def test_papyrus_proteins_property(self, temp_dir, sample_papyrus_parquets):
-        """Papyrus.view.proteins and the raw Papyrus.protein table are LazyFrames."""
+        """Papyrus.view.proteins and the raw Papyrus.tables.protein table are LazyFrames."""
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
@@ -914,7 +914,7 @@ class TestPapyrusDataClass:
             module=papyrus,
         )
         assert isinstance(obj.view.proteins, pl.LazyFrame)
-        assert isinstance(obj.protein, pl.LazyFrame)
+        assert isinstance(obj.tables.protein, pl.LazyFrame)
 
     def test_papyrus_is_frozen(self, temp_dir, sample_papyrus_parquets):
         """Papyrus dataclass should be frozen (immutable)."""

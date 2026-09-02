@@ -42,7 +42,7 @@ class _ChemblView(_View):
 class _PapyrusView(_View):
     """``proteins`` and ``full`` mirror the raw Papyrus tables: Papyrus already
     ships a near-flat schema, so these joins are close to passthrough. Use the
-    raw-table attributes (``Papyrus.protein``, ``Papyrus.bioactivity``) when you
+    raw-table attributes (``Papyrus.tables.protein``, ``Papyrus.tables.bioactivity``) when you
     want the source columns without the view's renames."""
 
     @property
@@ -53,6 +53,31 @@ class _PapyrusView(_View):
     def full(self) -> LazyFrame:
         """bioactivity + protein data as one flat LazyFrame."""
         return self._views["full"]
+
+
+class _SourceTables:
+    """Source tables as attributes; see fairfetched.get._tables."""
+
+    def __init__(self, owner: "_Base") -> None:
+        self._owner = owner
+
+    @property
+    def lfs(self) -> dict[str, LazyFrame]:
+        return self._owner.lfs
+
+    def __str__(self) -> str:
+        return str(self._owner)
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} available: {', '.join(sorted(self.lfs))}>"
+
+
+class _ChemblSourceTables(_SourceTables, ChemblTables):
+    pass
+
+
+class _PapyrusSourceTables(_SourceTables, PapyrusTables):
+    pass
 
 
 @dataclass(frozen=True)
@@ -100,7 +125,7 @@ class _Base:
 
 
 @dataclass(frozen=True, repr=False)
-class Chembl(_Base, ChemblTables):
+class Chembl(_Base):
     module: DatasetGetModule = chembl
 
     @staticmethod
@@ -110,6 +135,10 @@ class Chembl(_Base, ChemblTables):
     @cached_property
     def view(self) -> _ChemblView:
         return _ChemblView(self)
+
+    @cached_property
+    def tables(self) -> _ChemblSourceTables:
+        return _ChemblSourceTables(self)
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -151,7 +180,7 @@ class Chembl(_Base, ChemblTables):
 
 
 @dataclass(frozen=True, repr=False)
-class Papyrus(_Base, PapyrusTables):
+class Papyrus(_Base):
     module: DatasetGetModule = papyrus
 
     @staticmethod
@@ -161,6 +190,10 @@ class Papyrus(_Base, PapyrusTables):
     @cached_property
     def view(self) -> _PapyrusView:
         return _PapyrusView(self)
+
+    @cached_property
+    def tables(self) -> _PapyrusSourceTables:
+        return _PapyrusSourceTables(self)
 
     @classmethod
     def from_version(
@@ -190,9 +223,3 @@ class Papyrus(_Base, PapyrusTables):
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
         return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
-
-
-if __name__ == "__main__":
-    p = Papyrus.from_latest()
-    p.view.proteins
-    p.protein
