@@ -4,7 +4,7 @@ from pathlib import Path
 
 from polars import LazyFrame
 
-from fairfetched.get import chembl, papyrus
+from fairfetched.get import _demo, chembl, papyrus
 from fairfetched.get._chembl_tables import ChemblTables
 from fairfetched.get._papyrus_tables import PapyrusTables
 from fairfetched.utils import BASE_DIR
@@ -126,6 +126,25 @@ class _Base:
 
 @dataclass(frozen=True, repr=False)
 class Chembl(_Base):
+    """ChEMBL wrapper: download once, then read lazily.
+
+    ``Chembl.from_latest()`` (or ``Chembl.from_version(35)``) downloads a real
+    release. ``Chembl.demo()`` returns a tiny offline sample with the same API,
+    used by the examples here:
+
+    >>> from fairfetched.get import Chembl
+    >>> db = Chembl.demo()
+    >>> db.view.compounds.collect().shape                    # joined domain views
+    (3, 20)
+    >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
+    >>> db.tables.molecule_dictionary.collect()["pref_name"].to_list()
+    ['Aspirin', 'Ibuprofen', 'Ibuprofen sodium']
+    >>> db.tables.molecule_dictionary.collect_schema()       # column names + dtypes, no scan
+    Schema({'molregno': Int64, 'chembl_id': String, 'pref_name': String, 'max_phase': Float64, 'molecule_type': String, 'withdrawn_flag': Int64, 'chirality': Int64})
+    >>> len(db.lfs)                                          # every raw table
+    26
+    """
+
     module: DatasetGetModule = chembl
 
     @staticmethod
@@ -139,6 +158,17 @@ class Chembl(_Base):
     @cached_property
     def tables(self) -> _ChemblSourceTables:
         return _ChemblSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "Chembl":
+        """Tiny offline sample (3 molecules, 3 activities, 2 targets). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.chembl_parquets(),
+            dir=_demo.DEMO_DIR / "chembl",
+            module=cls.module,
+        )
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -181,6 +211,24 @@ class Chembl(_Base):
 
 @dataclass(frozen=True, repr=False)
 class Papyrus(_Base):
+    """Papyrus wrapper: download once, then read lazily.
+
+    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("05.7")``) downloads a
+    real release. ``Papyrus.demo()`` returns a tiny offline sample with the same
+    API, used by the examples here:
+
+    >>> from fairfetched.get import Papyrus
+    >>> db = Papyrus.demo()
+    >>> db.view.full.collect().shape            # bioactivity + protein, one flat frame
+    (3, 9)
+    >>> db.view.proteins.collect()["pref_name"].to_list()
+    ['Kinase 1', 'Kinase 2']
+    >>> db.tables.bioactivity.collect().height  # raw source tables
+    3
+    >>> db.tables.protein.collect_schema()      # column names + dtypes, no scan
+    Schema({'target_id': Int64, 'uniprot_id': String, 'target_chembl_id': String, 'pref_name': String})
+    """
+
     module: DatasetGetModule = papyrus
 
     @staticmethod
@@ -194,6 +242,17 @@ class Papyrus(_Base):
     @cached_property
     def tables(self) -> _PapyrusSourceTables:
         return _PapyrusSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "Papyrus":
+        """Tiny offline sample (3 activities, 2 proteins). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.papyrus_parquets(),
+            dir=_demo.DEMO_DIR / "papyrus",
+            module=cls.module,
+        )
 
     @classmethod
     def from_version(
