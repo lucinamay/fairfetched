@@ -106,26 +106,18 @@ def ensure_sqlite_db_to_parquets(
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
+    tables = _sqlite_tables(db_path)
+    out = {t: cache_dir / f"{t}.parquet" for t in tables}
+    if not force and all(p.exists() for p in out.values()):
+        return out
+
     con = duckdb.connect()
     con.execute("INSTALL sqlite; LOAD sqlite;")
     con.execute(f"ATTACH '{db_path}' AS src (TYPE sqlite, READ_ONLY)")
 
-    tables = [
-        r[0]
-        for r in con.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type='table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-            """
-        ).fetchall()
-    ]
 
-    out = {}
     for t in track(tables, desc="extracting tables from sqlite"):
-        path_out = cache_dir / f"{t}.parquet"
-        out[t] = path_out
+        path_out = out[t]
         if path_out.exists() and not force:
             continue
         _lg.debug(f"starting extraction of {t}")
