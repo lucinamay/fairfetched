@@ -23,7 +23,7 @@ class _Base:
         return f"{self.name}_{self.version}"
 
     def __repr__(self) -> str:
-        return f"<{self.name.capitalize()}_{self.version} at {self.dir}"
+        return f"<{self.name.capitalize()}_{self.version} at {self.dir}>"
 
     def __hash__(self):
         return hash(
@@ -61,7 +61,7 @@ class _Base:
         return cls.module.available_versions()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Chembl(_Base):
     module: DatasetGetModule = chembl
 
@@ -112,7 +112,7 @@ class Chembl(_Base):
         return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Papyrus(_Base):
     module: DatasetGetModule = papyrus
 
