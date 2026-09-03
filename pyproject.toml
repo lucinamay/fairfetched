@@ -1,6 +1,6 @@
 [project]
 name = "fairfetched"
-version = "0.1.0a20260820"
+version = "0.1.0a20260903"
 description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -62,7 +62,7 @@ wheels = [
 
 [[package]]
 name = "fairfetched"
-version = "0.1.0a20260820"
+version = "0.1.0a20260903"
 source = { virtual = "." }
 dependencies = [
     { name = "duckdb" },
