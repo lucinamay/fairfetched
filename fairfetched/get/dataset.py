@@ -4,9 +4,80 @@ from pathlib import Path
 
 from polars import LazyFrame
 
-from fairfetched.get import chembl, papyrus
+from fairfetched.get import _demo, chembl, papyrus
+from fairfetched.get._chembl_tables import ChemblTables
+from fairfetched.get._papyrus_tables import PapyrusTables
 from fairfetched.utils import BASE_DIR
-from fairfetched.utils.typing import BioactivityDBViews, DatasetGetModule
+from fairfetched.utils.typing import DatasetGetModule
+
+
+class _View:
+    """Joined domain views, built once from the raw tables."""
+
+    def __init__(self, owner: "_Base") -> None:
+        self._views = owner.module.build_views(owner.parquet_paths)
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} available: {', '.join(self._views)}>"
+
+    @property
+    def bioactivity(self) -> LazyFrame:
+        return self._views["bioactivity"]
+
+    @property
+    def compounds(self) -> LazyFrame:
+        return self._views["compounds"]
+
+
+class _ChemblView(_View):
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+    @property
+    def components(self) -> LazyFrame:
+        return self._views["components"]
+
+
+class _PapyrusView(_View):
+    """``proteins`` and ``full`` mirror the raw Papyrus tables: Papyrus already
+    ships a near-flat schema, so these joins are close to passthrough. Use the
+    raw-table attributes (``Papyrus.tables.protein``, ``Papyrus.tables.bioactivity``) when you
+    want the source columns without the view's renames."""
+
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+    @property
+    def full(self) -> LazyFrame:
+        """bioactivity + protein data as one flat LazyFrame."""
+        return self._views["full"]
+
+
+class _SourceTables:
+    """Source tables as attributes; see fairfetched.get._tables."""
+
+    def __init__(self, owner: "_Base") -> None:
+        self._owner = owner
+
+    @property
+    def lfs(self) -> dict[str, LazyFrame]:
+        return self._owner.lfs
+
+    def __str__(self) -> str:
+        return str(self._owner)
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} available: {', '.join(sorted(self.lfs))}>"
+
+
+class _ChemblSourceTables(_SourceTables, ChemblTables):
+    pass
+
+
+class _PapyrusSourceTables(_SourceTables, PapyrusTables):
+    pass
 
 
 @dataclass(frozen=True)
@@ -23,7 +94,7 @@ class _Base:
         return f"{self.name}_{self.version}"
 
     def __repr__(self) -> str:
-        return f"<{self.name.capitalize()}_{self.version} at {self.dir}"
+        return f"<{self.name.capitalize()}_{self.version} at {self.dir}>"
 
     def __hash__(self):
         return hash(
@@ -40,29 +111,40 @@ class _Base:
         sources = self.module.source_urls(self.version)
         return sources
 
-    @property
+    @cached_property
     def lfs(self) -> dict[str, LazyFrame]:
         return self.module.cleanly_scan_parquet_tables(self.parquet_paths)
 
-    @property
-    def views(self) -> BioactivityDBViews:
-        return self.module.build_views(self.parquet_paths)
-
-    @property
-    def bioactivity(self) -> LazyFrame:
-        return self.views["bioactivity"]
-
-    @property
-    def compounds(self) -> LazyFrame:
-        return self.views["compounds"]
+    @cached_property
+    def view(self) -> _View:
+        return _View(self)
 
     @classmethod
     def available_versions(cls) -> tuple[str, ...]:
         return cls.module.available_versions()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Chembl(_Base):
+    """ChEMBL wrapper: download once, then read lazily.
+
+    ``Chembl.from_latest()`` (or ``Chembl.from_version(35)``) downloads a real
+    release. ``Chembl.demo()`` returns a tiny offline sample with the same API,
+    used by the examples here:
+
+    >>> from fairfetched.get import Chembl
+    >>> db = Chembl.demo()
+    >>> db.view.compounds.collect().shape                    # joined domain views
+    (3, 20)
+    >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
+    >>> db.tables.molecule_dictionary.collect()["pref_name"].to_list()
+    ['Aspirin', 'Ibuprofen', 'Ibuprofen sodium']
+    >>> db.tables.molecule_dictionary.collect_schema()       # column names + dtypes, no scan
+    Schema({'molregno': Int64, 'chembl_id': String, 'pref_name': String, 'max_phase': Float64, 'molecule_type': String, 'withdrawn_flag': Int64, 'chirality': Int64})
+    >>> len(db.lfs)                                          # every raw table
+    26
+    """
+
     module: DatasetGetModule = chembl
 
     @staticmethod
@@ -70,8 +152,23 @@ class Chembl(_Base):
         return chembl.available_versions()
 
     @cached_property
-    def activity(self) -> LazyFrame:
-        return self.views["bioactivity"]
+    def view(self) -> _ChemblView:
+        return _ChemblView(self)
+
+    @cached_property
+    def tables(self) -> _ChemblSourceTables:
+        return _ChemblSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "Chembl":
+        """Tiny offline sample (3 molecules, 3 activities, 2 targets). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.chembl_parquets(),
+            dir=_demo.DEMO_DIR / "chembl",
+            module=cls.module,
+        )
 
     @cached_property
     def raw_sql_db_path(self) -> Path:
@@ -112,23 +209,50 @@ class Chembl(_Base):
         return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Papyrus(_Base):
+    """Papyrus wrapper: download once, then read lazily.
+
+    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("05.7")``) downloads a
+    real release. ``Papyrus.demo()`` returns a tiny offline sample with the same
+    API, used by the examples here:
+
+    >>> from fairfetched.get import Papyrus
+    >>> db = Papyrus.demo()
+    >>> db.view.full.collect().shape            # bioactivity + protein, one flat frame
+    (3, 9)
+    >>> db.view.proteins.collect()["pref_name"].to_list()
+    ['Kinase 1', 'Kinase 2']
+    >>> db.tables.bioactivity.collect().height  # raw source tables
+    3
+    >>> db.tables.protein.collect_schema()      # column names + dtypes, no scan
+    Schema({'target_id': Int64, 'uniprot_id': String, 'target_chembl_id': String, 'pref_name': String})
+    """
+
     module: DatasetGetModule = papyrus
 
     @staticmethod
     def get_available_versions():
         return papyrus.available_versions()
 
-    @property
-    def proteins(self) -> LazyFrame:
-        return self.views["proteins"]
+    @cached_property
+    def view(self) -> _PapyrusView:
+        return _PapyrusView(self)
 
-    @property
-    def full_data(self) -> LazyFrame:
-        """all data (bioactivity + protein data),
-        composed into one flat tabular format LazyFrame"""
-        return self.views["full"]
+    @cached_property
+    def tables(self) -> _PapyrusSourceTables:
+        return _PapyrusSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "Papyrus":
+        """Tiny offline sample (3 activities, 2 proteins). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.papyrus_parquets(),
+            dir=_demo.DEMO_DIR / "papyrus",
+            module=cls.module,
+        )
 
     @classmethod
     def from_version(
@@ -158,10 +282,3 @@ class Papyrus(_Base):
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
         return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
-
-
-if __name__ == "__main__":
-    p = Papyrus.from_latest()
-    p.views["proteins"]
-
-    p.lfs["proteins"]

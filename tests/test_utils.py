@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 
+from fairfetched.utils import _track as track_module
 from fairfetched.utils.files import ensure_untarred_sqlite as untar_sqlite
 from fairfetched.utils.storage import _get_fairfetched_home_dir
 
@@ -108,7 +109,9 @@ class TestHomeDir:
 
     def test_fairfetched_home_with_tilde(self):
         """Test FAIRFETCHED_HOME expands ~ correctly."""
-        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "~/fairfetched_data"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"FAIRFETCHED_HOME": "~/fairfetched_data"}, clear=False
+        ):
             result = _get_fairfetched_home_dir()
             expected = Path.home() / "fairfetched_data"
             assert result == expected
@@ -149,14 +152,46 @@ class TestHomeDir:
 
     def test_absolute_path_fairfetched_home(self):
         """Test FAIRFETCHED_HOME with absolute path (no tilde)."""
-        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "/tmp/fairfetched"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"FAIRFETCHED_HOME": "/tmp/fairfetched"}, clear=False
+        ):
             result = _get_fairfetched_home_dir()
             assert result == Path("/tmp/fairfetched")
 
     def test_nested_tilde_path(self):
         """Test nested paths with tilde."""
-        with mock.patch.dict(os.environ, {"FAIRFETCHED_HOME": "~/data/fairfetched/v1"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"FAIRFETCHED_HOME": "~/data/fairfetched/v1"}, clear=False
+        ):
             result = _get_fairfetched_home_dir()
             expected = Path.home() / "data/fairfetched/v1"
             assert result == expected
             assert "~" not in str(result)
+
+
+class TestTrack:
+    def test_simple_fallback_writes_to_stderr(self, monkeypatch, capsys):
+        monkeypatch.setattr(track_module, "HAS_TQDM", False)
+        monkeypatch.setattr(track_module, "HAS_RICH", False)
+        monkeypatch.setattr(track_module, "in_marimo", lambda: False)
+
+        out = list(track_module.track(range(3), desc="work", total=3))
+
+        captured = capsys.readouterr()
+        assert out == [0, 1, 2]
+        assert captured.out == ""
+        assert "work" in captured.err
+        assert "100%" in captured.err
+        assert "3/3" in captured.err
+
+    def test_track_can_be_disabled(self, monkeypatch, capsys):
+        monkeypatch.setattr(track_module, "HAS_TQDM", False)
+        monkeypatch.setattr(track_module, "HAS_RICH", False)
+        monkeypatch.setattr(track_module, "in_marimo", lambda: False)
+
+        out = list(track_module.track(range(3), desc="work", total=3, disable=True))
+
+        captured = capsys.readouterr()
+        assert out == [0, 1, 2]
+        assert captured.out == ""
+        assert captured.err == ""

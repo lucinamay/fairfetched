@@ -12,7 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fairfetched.get import chembl, papyrus
+from fairfetched.get import _demo, chembl, papyrus
 from fairfetched.get.dataset import Chembl, Papyrus
 
 # ============================================================================
@@ -120,177 +120,14 @@ def temp_dir():
 
 @pytest.fixture
 def sample_chembl_parquets(temp_dir):
-    """Create minimal Parquet files mimicking ChEMBL tables."""
-    parquet_dir = temp_dir / "chembl_parquets"
-    parquet_dir.mkdir()
-
-    # Minimal tables required for ChEMBL composition
-    tables = {
-        "molecule_dictionary": pl.DataFrame(
-            {
-                "molregno": [1, 2, 3],
-                "chembl_id": ["CHEMBL1", "CHEMBL2", "CHEMBL3"],
-                "pref_name": ["Aspirin", "Ibuprofen", "Acetaminophen"],
-            }
-        ),
-        "compound_properties": pl.DataFrame(
-            {
-                "molregno": [1, 2, 3],
-                "mw_freebase": [180.16, 206.28, 151.16],
-                "alogp": [1.19, 3.97, 0.46],
-            }
-        ),
-        "compound_structures": pl.DataFrame(
-            {
-                "molregno": [1, 2, 3],
-                "canonical_smiles": [
-                    "O=C(O)Cc1ccccc1C(=O)O",
-                    "CC(C)Cc1ccc(C(C)C(=O)O)cc1",
-                    "CC(=O)Nc1ccc(O)cc1",
-                ],
-            }
-        ),
-        "bioactivity": pl.DataFrame(
-            {
-                "activity_id": [10, 11, 12],
-                "molregno": [1, 2, 3],
-                "target_id": [100, 101, 100],
-                "assay_id": [1000, 1001, 1002],
-                "action_type": ["ANTAGONIST", "AGONIST", "ANTAGONIST"],
-                "standard_value": [5.2, 3.1, 6.5],
-                "standard_units": ["nM", "nM", "nM"],
-            }
-        ),
-        "protein": pl.DataFrame(
-            {
-                "target_id": [100, 101],
-                "target_chembl_id": ["CHEMBL100", "CHEMBL101"],
-                "pref_name": ["TYK2", "JAK1"],
-                "target_type": ["SINGLE PROTEIN", "SINGLE PROTEIN"],
-            }
-        ),
-        "action_type": pl.DataFrame(
-            {
-                "action_type": ["ANTAGONIST", "AGONIST"],
-                "description": ["Antagonist", "Agonist"],
-            }
-        ),
-        "assays": pl.DataFrame(
-            {
-                "assay_id": [1000, 1001, 1002],
-                "assay_type": ["B", "F", "B"],
-                "assay_chembl_id": ["CHEMBL1000", "CHEMBL1001", "CHEMBL1002"],
-                "description": ["Binding assay", "Functional assay", "Binding assay"],
-            }
-        ),
-        "assay_type": pl.DataFrame(
-            {
-                "assay_type": ["B", "F"],
-                "description": ["Binding", "Functional"],
-            }
-        ),
-        "compound_records": pl.DataFrame(
-            {
-                "molregno": [1, 2, 3],
-                "doc_id": [5000, 5001, 5002],
-                "compound_record_id": [1, 2, 3],
-            }
-        ),
-        "docs": pl.DataFrame(
-            {
-                "doc_id": [5000, 5001, 5002],
-                "pubmed_id": [12345, 12346, 12347],
-                "journal": ["J Med Chem", "Bioorg Med Chem", "J Med Chem"],
-            }
-        ),
-        "compound_structural_alerts": pl.DataFrame(
-            {
-                "molregno": [1, 2],
-                "alert_id": [1, 2],
-                "alert_name": ["Genotoxic Carbamate", "PAINS filterA1"],
-            }
-        ),
-        "component_sequences": pl.DataFrame(
-            {
-                "component_id": [1, 2],
-                "component_type": ["PROTEIN", "ANTIBODY"],
-            }
-        ),
-        "component_class": pl.DataFrame(
-            {
-                "component_id": [1, 2],
-                "protein_class_id": [10, 11],
-                "protein_class_desc": ["Enzyme", "Antibody"],
-            }
-        ),
-        "component_domains": pl.DataFrame(
-            {
-                "component_id": [1, 2],
-                "domain_id": [100, 101],
-            }
-        ),
-        "domains": pl.DataFrame(
-            {
-                "domain_id": [100, 101],
-                "domain_name": ["Kinase domain", "Antibody domain"],
-            }
-        ),
-    }
-
-    paths = {}
-    for name, df in tables.items():
-        path = parquet_dir / f"{name}.parquet"
-        df.write_parquet(path)
-        paths[name] = path
-
-    return paths
+    """ChEMBL sample tables (see fairfetched.get._demo) written as parquet."""
+    return _demo.write_parquets(_demo.chembl_frames(), temp_dir / "chembl_parquets")
 
 
 @pytest.fixture
 def sample_papyrus_parquets(temp_dir):
-    """Create minimal Parquet files mimicking Papyrus dataset."""
-    parquet_dir = temp_dir / "papyrus_parquets"
-    parquet_dir.mkdir()
-
-    bioactivity_df = pl.DataFrame(
-        {
-            "activity_id": [1, 2, 3],
-            "connectivity": ["CCO", "CCC", "CCCC"],
-            "inchikey": [
-                "LFQSCWFLJHTTHZ-UHFFFAOYSA-N",
-                "LFQSCWFLJHTTHZ-UHFFFAOYSA-O",
-                "LFQSCWFLJHTTHZ-UHFFFAOYSA-P",
-            ],
-            "inchi": [
-                "InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3",
-                "InChI=1S/C3H8/c1-2-3/h3H2,2H2,1H3",
-                "InChI=1S/C4H10/c1-2-3-4/h3H2,1-2,4H3",
-            ],
-            "target_id": [100, 101, 100],
-            "pchembl_value_mean": [5.2, 3.1, 6.5],
-            "year": [2020, 2021, 2022],
-        }
-    )
-
-    protein_df = pl.DataFrame(
-        {
-            "target_id": [100, 101],
-            "uniprotid": ["P12345", "P12346"],
-            "target_chembl_id": ["CHEMBL100", "CHEMBL101"],
-            "pref_name": ["Kinase 1", "Kinase 2"],
-        }
-    )
-
-    bioactivity_path = parquet_dir / "bioactivity.parquet"
-    protein_path = parquet_dir / "protein.parquet"
-
-    bioactivity_df.write_parquet(bioactivity_path)
-    protein_df.write_parquet(protein_path)
-
-    return {
-        "bioactivity": bioactivity_path,
-        "protein": protein_path,
-    }
+    """Papyrus sample tables (see fairfetched.get._demo) written as parquet."""
+    return _demo.write_parquets(_demo.papyrus_frames(), temp_dir / "papyrus_parquets")
 
 
 # ============================================================================
@@ -445,32 +282,82 @@ class TestChemblCompose:
 
         assert all(isinstance(lf, pl.LazyFrame) for lf in result.values())
 
+    def test_build_views_raises_on_missing_required_table(self, sample_chembl_parquets):
+        """A table the views join, absent from the release, aborts build_views
+        before any join runs."""
+        paths = dict(sample_chembl_parquets)
+        del paths["target_components"]
+
+        with pytest.raises(ValueError, match="target_components"):
+            chembl.build_views(paths)
+
+    def test_build_views_raises_on_empty_required_table(
+        self, temp_dir, sample_chembl_parquets
+    ):
+        """A required table ChEMBL ships with zero rows reads back Null-typed;
+        build_views should raise, not fail later inside a join."""
+        paths = dict(sample_chembl_parquets)
+        empty = temp_dir / "activities_empty.parquet"
+        pl.DataFrame(schema={"activity_id": pl.Null}).write_parquet(empty)
+        paths["activities"] = empty
+
+        with pytest.raises(ValueError, match="activities"):
+            chembl.build_views(paths)
+
+    def test_build_views_raises_on_empty_non_anchor_table(
+        self, temp_dir, sample_chembl_parquets
+    ):
+        """Every joined table is enforced, not just the view anchors: an empty
+        lookup like assay_type aborts too."""
+        paths = dict(sample_chembl_parquets)
+        empty = temp_dir / "assay_type_empty.parquet"
+        pl.DataFrame(
+            schema={"assay_type": pl.Null, "assay_desc": pl.Null}
+        ).write_parquet(empty)
+        paths["assay_type"] = empty
+
+        with pytest.raises(ValueError, match="assay_type"):
+            chembl.build_views(paths)
+
     def test_bioactivity_composition_joins_correctly(self, sample_chembl_parquets):
-        """Bioactivity should join with protein, action_type, assays."""
+        """Bioactivity should carry activity, assay, target and document fields
+        and stay at one row per activity."""
         result = chembl.build_views(sample_chembl_parquets)
         bioactivity: pl.DataFrame = result["bioactivity"].collect()
-        # Should have columns from both bioactivity and protein tables
-        assert "target_id" in bioactivity.columns
-        assert "pref_name" in bioactivity.columns  # From protein
+
+        assert len(bioactivity) == 3  # no fan-out
         assert "molregno" in bioactivity.columns
+        assert "pchembl_value" in bioactivity.columns
+        assert "assay_id" in bioactivity.columns
+        assert "tid" in bioactivity.columns  # target via assays.tid
+        assert "pref_name" in bioactivity.columns  # from target_dictionary
+        assert "pubmed_id" in bioactivity.columns  # from docs
+        # activities.doc_id null is backfilled from assays.doc_id
+        assert bioactivity["pubmed_id"].null_count() == 0
 
     def test_compounds_composition_includes_structures(self, sample_chembl_parquets):
-        """Compounds should include structures and properties."""
+        """Compounds should include structures, properties, parent hierarchy and
+        structural alerts, one row per molregno."""
         result = chembl.build_views(sample_chembl_parquets)
         compounds: pl.DataFrame = result["compounds"].collect()
 
-        # Should have molecular structure info
+        assert len(compounds) == 3
         assert "canonical_smiles" in compounds.columns
         assert "mw_freebase" in compounds.columns
+        assert "parent_molregno" in compounds.columns
+        assert "structural_alerts" in compounds.columns
 
-    def test_proteins_returns_protein_table(self, sample_chembl_parquets):
-        """Proteins should just return the protein LazyFrame."""
+    def test_proteins_expands_targets_to_components(self, sample_chembl_parquets):
+        """Proteins view expands target_dictionary through target_components to
+        the component sequences (multi-component targets yield several rows)."""
         result = chembl.build_views(sample_chembl_parquets)
         proteins: pl.DataFrame = result["proteins"].collect()
 
-        assert "target_id" in proteins.columns
-        assert "target_chembl_id" in proteins.columns
-        assert len(proteins) == 2
+        assert "tid" in proteins.columns
+        assert "chembl_id" in proteins.columns
+        assert "accession" in proteins.columns
+        assert "gene_symbols" in proteins.columns
+        assert len(proteins) == 3  # tid 100 -> 1 component, tid 101 -> 2
 
 
 # ============================================================================
@@ -569,8 +456,8 @@ class TestPapyrusCompose:
         compounds: pl.DataFrame = result["compounds"].collect()
 
         # Should be unique across structure identifiers
-        assert "connectivity" in compounds.columns
         assert "inchikey" in compounds.columns
+        assert "inchi" in compounds.columns
         assert len(compounds) <= 3
 
 
@@ -606,8 +493,10 @@ class TestChemblDataClass:
         assert isinstance(lfs, dict)
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
-    def test_chembl_build_views_returns_dict(self, temp_dir, sample_chembl_parquets):
-        """Chembl.build_views() should return dict with expected keys."""
+    def test_chembl_view_exposes_bioactivity_and_compounds(
+        self, temp_dir, sample_chembl_parquets
+    ):
+        """Chembl.view exposes the joined views as LazyFrames."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
@@ -615,13 +504,11 @@ class TestChemblDataClass:
             dir=temp_dir,
             module=chembl,
         )
-        views = obj.views
-        assert isinstance(views, dict)
-        assert "bioactivity" in views
-        assert "compounds" in views
+        assert isinstance(obj.view.bioactivity, pl.LazyFrame)
+        assert isinstance(obj.view.compounds, pl.LazyFrame)
 
-    def test_chembl_bioactivity_property(self, temp_dir, sample_chembl_parquets):
-        """Chembl.bioactivity should return LazyFrame."""
+    def test_chembl_raw_table_attribute(self, temp_dir, sample_chembl_parquets):
+        """Chembl exposes raw source tables as attributes."""
         obj = Chembl(
             version="36",
             raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
@@ -629,18 +516,8 @@ class TestChemblDataClass:
             dir=temp_dir,
             module=chembl,
         )
-        assert isinstance(obj.bioactivity, pl.LazyFrame)
-
-    def test_chembl_compounds_property(self, temp_dir, sample_chembl_parquets):
-        """Chembl.compounds should return LazyFrame."""
-        obj = Chembl(
-            version="36",
-            raw_paths={"sql_db": temp_dir / "chembl.tar.gz"},
-            parquet_paths=sample_chembl_parquets,
-            dir=temp_dir,
-            module=chembl,
-        )
-        assert isinstance(obj.compounds, pl.LazyFrame)
+        assert isinstance(obj.tables.activities, pl.LazyFrame)
+        assert obj.tables.activities is obj.lfs["activities"]
 
     def test_chembl_string_representation(self, temp_dir, sample_chembl_parquets):
         """Chembl should have meaningful string representation."""
@@ -692,11 +569,10 @@ class TestPapyrusDataClass:
             dir=temp_dir,
             module=papyrus,
         )
-        views = obj.views
-        assert isinstance(views, dict)
-        assert "bioactivity" in views
-        assert "compounds" in views
-        assert "proteins" in views
+        assert isinstance(obj.view.bioactivity, pl.LazyFrame)
+        assert isinstance(obj.view.compounds, pl.LazyFrame)
+        assert isinstance(obj.view.proteins, pl.LazyFrame)
+        assert isinstance(obj.view.full, pl.LazyFrame)
 
     def test_papyrus_lfs_returns_lazy_frames(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.lfs should return dict of LazyFrames."""
@@ -712,7 +588,7 @@ class TestPapyrusDataClass:
         assert all(isinstance(lf, pl.LazyFrame) for lf in lfs.values())
 
     def test_papyrus_proteins_property(self, temp_dir, sample_papyrus_parquets):
-        """Papyrus.proteins should return protein LazyFrame."""
+        """Papyrus.view.proteins and the raw Papyrus.tables.protein table are LazyFrames."""
         obj = Papyrus(
             version="05.7",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
@@ -720,7 +596,8 @@ class TestPapyrusDataClass:
             dir=temp_dir,
             module=papyrus,
         )
-        assert isinstance(obj.proteins, pl.LazyFrame)
+        assert isinstance(obj.view.proteins, pl.LazyFrame)
+        assert isinstance(obj.tables.protein, pl.LazyFrame)
 
     def test_papyrus_is_frozen(self, temp_dir, sample_papyrus_parquets):
         """Papyrus dataclass should be frozen (immutable)."""
@@ -757,48 +634,58 @@ class TestPapyrusDataClass:
 class TestChemblCompositionHelpers:
     """Test internal composition helper functions."""
 
-    def test_bioactivities_includes_protein_join(self, sample_chembl_parquets):
-        """_bioactivities should include protein information."""
-        result = chembl._bioactivities(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+    def test_bioactivities_includes_target_join(self, sample_chembl_parquets):
+        """_bioactivities should reach the target through assays.tid."""
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._bioactivities(lfs).collect()
 
-        # Should have columns from both bioactivity and protein
         assert "molregno" in collected.columns
-        assert "pref_name" in collected.columns  # From protein
+        assert "pref_name" in collected.columns  # from target_dictionary
+        assert "tid" in collected.columns
 
     def test_bioactivities_includes_assay_info(self, sample_chembl_parquets):
         """_bioactivities should include assay information."""
-        result = chembl._bioactivities(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._bioactivities(lfs).collect()
 
-        # Should have assay-related columns
         assert "assay_id" in collected.columns
+        assert "assay_desc" in collected.columns  # from assay_type lookup
 
     def test_compounds_structure_join(self, sample_chembl_parquets):
         """_compounds should join structure and property data."""
-        result = chembl._compounds(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._compounds(lfs).collect()
 
-        # Should have structure-related columns
         assert "canonical_smiles" in collected.columns
         assert "mw_freebase" in collected.columns
 
-    def test_compounds_includes_records_info(self, sample_chembl_parquets):
-        """_compounds should include compound record and document info."""
-        result = chembl._compounds(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+    def test_compounds_includes_hierarchy_and_alerts(self, sample_chembl_parquets):
+        """_compounds should carry salt/parent hierarchy and structural alerts,
+        not literature provenance (that lives in the bioactivity view)."""
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._compounds(lfs).collect()
 
-        # Should have document-related columns
-        assert "doc_id" in collected.columns or "pubmed_id" in collected.columns
+        assert "parent_molregno" in collected.columns
+        assert "structural_alerts" in collected.columns
+        assert "doc_id" not in collected.columns
 
     def test_components_domain_hierarchy(self, sample_chembl_parquets):
         """_components should include component, class, and domain hierarchy."""
-        result = chembl._components(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._components(lfs).collect()
 
-        # Should have the component structure
         assert "component_id" in collected.columns
         assert "domain_id" in collected.columns
+        assert "protein_classes" in collected.columns
+
+    def test_targets_expands_components(self, sample_chembl_parquets):
+        """_targets should expand a complex target to its components."""
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._targets(lfs).collect()
+
+        assert len(collected) == 3
+        assert set(collected["tid"]) == {100, 101}
+        assert "gene_symbols" in collected.columns
 
 
 # ============================================================================
@@ -808,61 +695,6 @@ class TestChemblCompositionHelpers:
 
 class TestEdgeCases:
     """Test edge cases and error conditions."""
-
-    def test_empty_bioactivity_composition(self, temp_dir):
-        """Should handle empty bioactivity table."""
-        empty_bio = pl.DataFrame(
-            {
-                "activity_id": [],
-                "target_id": [],
-                "assay_id": [],
-                "action_type": [],
-            }
-        )
-        empty_protein = pl.DataFrame(
-            {
-                "target_id": [],
-            }
-        )
-        empty_action = pl.DataFrame(
-            {
-                "action_type": [],
-            }
-        )
-        empty_assay = pl.DataFrame(
-            {
-                "assay_id": [],
-            }
-        )
-        empty_assay_type = pl.DataFrame(
-            {
-                "assay_type": [],
-            }
-        )
-
-        bio_path = temp_dir / "bio.parquet"
-        prot_path = temp_dir / "prot.parquet"
-        action_path = temp_dir / "action.parquet"
-        assay_path = temp_dir / "assay.parquet"
-        assay_type_path = temp_dir / "assay_type.parquet"
-
-        empty_bio.write_parquet(bio_path)
-        empty_protein.write_parquet(prot_path)
-        empty_action.write_parquet(action_path)
-        empty_assay.write_parquet(assay_path)
-        empty_assay_type.write_parquet(assay_type_path)
-
-        paths = {
-            "bioactivity": bio_path,
-            "protein": prot_path,
-            "action_type": action_path,
-            "assays": assay_path,
-            "assay_type": assay_type_path,
-        }
-
-        # Should not raise, but return empty frame
-        result = chembl._bioactivities(paths)
-        assert isinstance(result, pl.LazyFrame)
 
     def test_none_values_preserved_in_clean(self, temp_dir):
         """None values should be preserved through cleaning."""
@@ -977,7 +809,7 @@ class TestPapyrusCompositionDetails:
         # Should have columns from both bioactivity and protein
         assert "target_id" in full.columns
         assert "uniprot_id" in full.columns
-        assert "connectivity" in full.columns
+        assert "inchikey" in full.columns
 
     def test_papyrus_full_not_same_as_bioactivity(self, sample_papyrus_parquets):
         """Papyrus full should no longer be same as bioactivity (only full has a protein join)."""
@@ -998,7 +830,7 @@ class TestPapyrusCompositionDetails:
         # activity_id should be dropped
         assert "activity_id" not in compounds.columns
         # But structural identifiers should remain
-        assert "connectivity" in compounds.columns
+        assert "inchikey" in compounds.columns
 
 
 class TestCompositionJoinValidation:
@@ -1018,8 +850,8 @@ class TestCompositionJoinValidation:
 
     def test_chembl_compounds_unique_structures(self, sample_chembl_parquets):
         """Compounds should be based on molregno unique values."""
-        result = chembl._compounds(sample_chembl_parquets)
-        collected: pl.DataFrame = result.collect()
+        lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
+        collected: pl.DataFrame = chembl._compounds(lfs).collect()
 
         # Should not have duplicate molregno values
         molregno_count = len(collected.select("molregno").unique())
@@ -1030,10 +862,8 @@ class TestCompositionJoinValidation:
         result = papyrus.build_views(sample_papyrus_parquets)
         compounds: pl.DataFrame = result["compounds"].collect()
 
-        # Get unique count across the three structure columns
-        unique_count = len(
-            compounds.select(("connectivity", "inchikey", "inchi")).unique()
-        )
+        # Get unique count across the structure columns
+        unique_count = len(compounds.select(("inchikey", "inchi")).unique())
         assert unique_count == len(compounds) or len(compounds) == 0
 
 
@@ -1083,3 +913,17 @@ class TestDataIntegrity:
         # Check that empty strings in string columns are replaced
         # (None values should remain None)
         assert collected["col2"][1] is None
+
+
+class TestDocstrings:
+    """The Chembl/Papyrus docstring examples must stay runnable."""
+
+    def test_dataset_doctests_pass(self, tmp_path, monkeypatch):
+        import doctest
+
+        from fairfetched.get import dataset
+
+        monkeypatch.chdir(tmp_path)  # examples that write files (sink_csv) land here
+        result = doctest.testmod(dataset, verbose=False)
+        assert result.failed == 0, f"{result.failed} doctest failures"
+        assert result.attempted > 0

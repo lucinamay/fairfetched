@@ -23,14 +23,15 @@ mychembl = Chembl.from_latest() # this downloads Chembl raw files + extracts par
                                 # from there, fairfetched saves it to a folder chembl/<version>
 
 mychembl.lfs                  # a dictionary of all chembl files in polars LazyFrame format, scanned directly from the extracted .parquet files
+mychembl.activities           # each raw source table is also an attribute (mychembl.target_dictionary, ...); tab-completion and dir() list them
 
 
 mychembl.parquet_paths   # the paths to the parquet-converted tabular data files in the Chembl .db file
 
 mychembl.raw_paths            # the paths to the raw chembl file as downloaded from Chembl. currently does include an uncompressed .db file
 
-mychembl.compounds            # NOT YET IMPLEMENTED !! convenience alias for mychembl.compose()["compounds"], which uses mychembl.lfs LazyFrame joins to obtain an intuitive join of the data.
-                              # from there, you can
+mychembl.view.compounds       # joined domain views live under .view (.view.bioactivity, .view.compounds, .view.proteins, .view.components);
+                              # each is a LazyFrame join over mychembl.lfs giving an intuitive, flat shape of the data
 ```
 
 ### examples of how to use the LazyFrames:

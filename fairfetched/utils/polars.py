@@ -10,9 +10,12 @@ from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, Callable, Hashable, Iterable
 
+import duckdb
 import polars as pl
 
 from fairfetched.utils._track import track
+
+_lg = logging.getLogger(__name__)
 
 _TEMP_FILES: list[str] = []
 
@@ -28,7 +31,7 @@ atexit.register(_cleanup_temp_files)
 
 def decompress_and_scan_tsvxz(path: str | Path, **kwargs) -> pl.LazyFrame:
     path = Path(path)
-    logging.debug(f"scanning {path}")
+    _lg.debug(f"scanning {path}")
     print(f"scanning {path}")
 
     # Polars cannot lazily scan a compressed stream without buffering the entire
@@ -103,36 +106,26 @@ def ensure_sqlite_db_to_parquets(
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(exist_ok=True, parents=True)
 
-    # tables = _sqlite_tables(db_path)
-    conn = sqlite3.connect(db_path)
+    tables = _sqlite_tables(db_path)
+    out = {t: cache_dir / f"{t}.parquet" for t in tables}
+    if not force and all(p.exists() for p in out.values()):
+        return out
 
-    # get user tables
-    tables = (
-        pl.read_database(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type='table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-            """,
-            conn,
-        )
-        .get_column("name")
-        .to_list()
-    )
+    con = duckdb.connect()
+    con.execute("INSTALL sqlite; LOAD sqlite;")
+    con.execute(f"ATTACH '{db_path}' AS src (TYPE sqlite, READ_ONLY)")
 
-    # load tables
-    out = {}
-    for t in track(tables, desc="exctracting tables from sqlite"):
-        path_out = Path(cache_dir) / f"{t}.parquet"
-        out[t] = path_out
+
+    for t in track(tables, desc="extracting tables from sqlite"):
+        path_out = out[t]
         if path_out.exists() and not force:
             continue
-        pl.read_database(
-            f'SELECT * FROM "{t}"', conn, infer_schema_length=None
-        ).write_parquet(path_out)
+        _lg.debug(f"starting extraction of {t}")
+        con.execute(
+            f"COPY (SELECT * FROM src.\"{t}\") TO '{path_out}' (FORMAT parquet)"
+        )
 
-    conn.close()  # 5m37s
+    con.close()
     return out
 
 
