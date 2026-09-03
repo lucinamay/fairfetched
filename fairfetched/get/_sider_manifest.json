@@ -1,0 +1,31 @@
+{
+  "written": "2026-09-03",
+  "sider_version": "4.1",
+  "files": {
+    "meddra_freq": {
+      "filename": "meddra_freq.tsv.gz",
+      "bytes": 2058445,
+      "sha256": "fcdfbf479c6b568dfca557a3eb2cdbe49c4a3291090999c0de0bd7092feaec7f"
+    },
+    "meddra_all_se": {
+      "filename": "meddra_all_se.tsv.gz",
+      "bytes": 2381171,
+      "sha256": "119b2f5319a9398da83e5fe3419889010dbacf8d3eef590251b00c025e2b3f99"
+    },
+    "meddra": {
+      "filename": "meddra.tsv.gz",
+      "bytes": 1084933,
+      "sha256": "8be5a752dae41ded5c952e360903ce2709b24a71efe0e300f0904ff1cb7a1daf"
+    },
+    "drug_names": {
+      "filename": "drug_names.tsv",
+      "bytes": 34759,
+      "sha256": "6427a3e3202c71a81dff97092957aacf0700b9c01f34b07e452a1ec47c92b007"
+    },
+    "readme": {
+      "filename": "README",
+      "bytes": 3304,
+      "sha256": "de992e6c1475d774d9f8f8271a6c371e2f8b2c86dcf459e871dfd1a830f54c06"
+    }
+  }
+}

@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 track = ["rich>=14.3.3"]
+adrecs = ["fastexcel>=0.12"] # ADReCS / ADReCS-Target's .xlsx;
 rdkit = [
     "rdkit>=2025.9.6",
 ]
@@ -23,6 +24,7 @@ dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",
     "fairfetched[standardise]",
+    "fairfetched[adrecs]",
     "rust-just>=1.46.0",
 ]
 
@@ -34,6 +36,7 @@ addopts = "-rxX"
 
 [tool.setuptools]
 package-dir = {"" = "."}
+package-data = {"fairfetched.get" = ["_*_manifest.json"]}
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -50,6 +53,7 @@ fairfetched = { workspace = true }
 dev = [
     "chembl-structure-pipeline>=1.2.4",
     "fairfetched",
+    "fastexcel>=0.12",
     "papyrus-structure-pipeline>=0.0.5",
     # "polars[gpu]>=1.35.2",
     "pytest>=9.0.2",

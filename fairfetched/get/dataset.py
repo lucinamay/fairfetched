@@ -4,7 +4,7 @@ from pathlib import Path
 
 from polars import LazyFrame
 
-from fairfetched.get import _demo, chembl, papyrus
+from fairfetched.get import _demo, adrecs, adrecs_target, chembl, papyrus, sider
 from fairfetched.get._chembl_tables import ChemblTables
 from fairfetched.get._papyrus_tables import PapyrusTables
 from fairfetched.utils import BASE_DIR
@@ -53,6 +53,48 @@ class _PapyrusView(_View):
     def full(self) -> LazyFrame:
         """bioactivity + protein data as one flat LazyFrame."""
         return self._views["full"]
+
+
+class _AdrecsView(_View):
+    @property
+    def drugs(self) -> LazyFrame:
+        return self._views["drugs"]
+
+    @property
+    def adrs(self) -> LazyFrame:
+        return self._views["adrs"]
+
+    @property
+    def drug_adr(self) -> LazyFrame:
+        return self._views["drug_adr"]
+
+
+class _AdrecsTargetView(_View):
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+    @property
+    def drug_adr_protein(self) -> LazyFrame:
+        return self._views["drug_adr_protein"]
+
+    @property
+    def drug_adr_gene(self) -> LazyFrame:
+        return self._views["drug_adr_gene"]
+
+
+class _SiderView(_View):
+    @property
+    def drugs(self) -> LazyFrame:
+        return self._views["drugs"]
+
+    @property
+    def side_effects(self) -> LazyFrame:
+        return self._views["side_effects"]
+
+    @property
+    def frequencies(self) -> LazyFrame:
+        return self._views["frequencies"]
 
 
 class _SourceTables:
@@ -282,3 +324,165 @@ class Papyrus(_Base):
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
         return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
+
+
+@dataclass(frozen=True, repr=False)
+class Adrecs(_Base):
+    """ADReCS wrapper: download once, then read lazily.
+
+    ``tables`` holds the raw source tables (cleaned on scan); ``view`` holds the
+    joined domain views ``drugs``, ``adrs``, ``drug_adr``::
+
+        db = Adrecs.from_latest()
+        db.view.drug_adr.sink_parquet("adrecs_drug_adr.parquet")
+        db.tables["adr"].collect_schema()
+    """
+
+    module: DatasetGetModule = adrecs
+
+    @staticmethod
+    def get_available_versions():
+        return adrecs.available_versions()
+
+    @cached_property
+    def view(self) -> _AdrecsView:
+        return _AdrecsView(self)
+
+    @cached_property
+    def tables(self) -> dict[str, LazyFrame]:
+        return self.lfs
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str,
+        root_dir: Path | str = f"{BASE_DIR}/adrecs",
+        force: bool = False,
+    ) -> "Adrecs":
+        dir = Path(root_dir) / str(version)
+        raw_paths = adrecs.ensure_raw_files(
+            str(version), raw_dir=dir / "raw", force=force
+        )
+        parquet_paths = adrecs.ensure_parquet_tables(raw_paths, table_dir=dir / "parquet")
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/adrecs", force: bool = False
+    ) -> "Adrecs":
+        return cls.from_version(adrecs.latest(), root_dir=root_dir, force=force)
+
+
+@dataclass(frozen=True, repr=False)
+class AdrecsTarget(_Base):
+    """ADReCS-Target wrapper: download once, then read lazily.
+
+    ``view`` holds the joined domain views ``proteins``, ``drug_adr_protein``,
+    ``drug_adr_gene``::
+
+        db = AdrecsTarget.from_latest()
+        db.view.drug_adr_protein.sink_parquet("drug_adr_protein.parquet")
+    """
+
+    module: DatasetGetModule = adrecs_target
+
+    @staticmethod
+    def get_available_versions():
+        return adrecs_target.available_versions()
+
+    @cached_property
+    def view(self) -> _AdrecsTargetView:
+        return _AdrecsTargetView(self)
+
+    @cached_property
+    def tables(self) -> dict[str, LazyFrame]:
+        return self.lfs
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str = "1.0",
+        root_dir: Path | str = f"{BASE_DIR}/adrecs_target",
+        force: bool = False,
+    ) -> "AdrecsTarget":
+        dir = Path(root_dir) / str(version)
+        raw_paths = adrecs_target.ensure_raw_files(
+            str(version), raw_dir=dir / "raw", force=force
+        )
+        parquet_paths = adrecs_target.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/adrecs_target", force: bool = False
+    ) -> "AdrecsTarget":
+        return cls.from_version(adrecs_target.latest(), root_dir=root_dir, force=force)
+
+
+@dataclass(frozen=True, repr=False)
+class Sider(_Base):
+    """SIDER wrapper: download once, then read lazily.
+
+    SIDER's URLs are unversioned, so the release is pinned by content hash
+    (``fairfetched.get.sider._sider_manifest.json``); a changed upstream file
+    raises on download. ``view`` holds the joined domain views ``drugs``,
+    ``side_effects``, ``frequencies``::
+
+        db = Sider.from_latest()
+        db.view.frequencies.sink_parquet("sider_frequencies.parquet")
+        db.tables["meddra"].collect_schema()
+    """
+
+    module: DatasetGetModule = sider
+
+    @staticmethod
+    def get_available_versions():
+        return sider.available_versions()
+
+    @cached_property
+    def view(self) -> _SiderView:
+        return _SiderView(self)
+
+    @cached_property
+    def tables(self) -> dict[str, LazyFrame]:
+        return self.lfs
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str = "4.1",
+        root_dir: Path | str = f"{BASE_DIR}/sider",
+        force: bool = False,
+    ) -> "Sider":
+        dir = Path(root_dir) / str(version)
+        raw_paths = sider.ensure_raw_files(
+            str(version), raw_dir=dir / "raw", force=force
+        )
+        parquet_paths = sider.ensure_parquet_tables(raw_paths, table_dir=dir / "parquet")
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/sider", force: bool = False
+    ) -> "Sider":
+        return cls.from_version(sider.latest(), root_dir=root_dir, force=force)
