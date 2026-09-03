@@ -23,6 +23,9 @@ jobs:
         with:
           enable-cache: false
 
+      - name: Tag matches package version
+        run: test "v$(uv version --short)" = "${GITHUB_REF_NAME}"
+
       - name: Build
         run: uv build
 
