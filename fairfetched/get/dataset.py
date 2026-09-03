@@ -181,8 +181,8 @@ class Chembl(_Base):
     >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
     >>> db.tables.molecule_dictionary.collect()["pref_name"].to_list()
     ['Aspirin', 'Ibuprofen', 'Ibuprofen sodium']
-    >>> db.tables.molecule_dictionary.collect_schema()       # column names + dtypes, no scan
-    Schema({'molregno': Int64, 'chembl_id': String, 'pref_name': String, 'max_phase': Float64, 'molecule_type': String, 'withdrawn_flag': Int64, 'chirality': Int64})
+    >>> db.tables.molecule_dictionary.collect_schema().names()  # column names, no scan
+    ['molregno', 'chembl_id', 'pref_name', 'max_phase', 'molecule_type', 'withdrawn_flag', 'chirality']
     >>> len(db.lfs)                                          # every raw table
     26
     """
@@ -267,8 +267,8 @@ class Papyrus(_Base):
     ['Kinase 1', 'Kinase 2']
     >>> db.tables.bioactivity.collect().height  # raw source tables
     3
-    >>> db.tables.protein.collect_schema()      # column names + dtypes, no scan
-    Schema({'target_id': Int64, 'uniprot_id': String, 'target_chembl_id': String, 'pref_name': String})
+    >>> db.tables.protein.collect_schema().names()  # column names, no scan
+    ['target_id', 'uniprot_id', 'target_chembl_id', 'pref_name']
     """
 
     module: DatasetGetModule = papyrus
