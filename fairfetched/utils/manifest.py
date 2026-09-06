@@ -4,7 +4,7 @@ ChEMBL and Papyrus pin a release through the version in their URL. A source
 that cannot -- SIDER serves whatever is current under a versionless URL --
 commits a manifest of sha256s beside its module instead. :func:`verify` raises
 when a downloaded file no longer matches the committed hash; :func:`write`
-regenerates the manifest.
+regenerates the manifest. DrugBank has different drift messages (because local pins)
 
 A source module wires it in with two lines::
 
@@ -23,11 +23,25 @@ from pathlib import Path
 _lg = lg.getLogger(__name__)
 
 
+_DRIFT_MSG = (
+    "upstream moved. Recheck every count derived from this source, then re-pin."
+)
+
+
 def sha256(path: Path | str) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """Chunked, so DrugBank's ~150 MB gzip does not land in memory whole."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-def verify(raw_paths: dict[str, Path], manifest_path: Path | str) -> None:
+def verify(
+    raw_paths: dict[str, Path],
+    manifest_path: Path | str,
+    drift_hint: str = _DRIFT_MSG,
+) -> None:
     """Raise unless every path in ``raw_paths`` that the manifest records still
     matches its sha256.
 
@@ -35,12 +49,16 @@ def verify(raw_paths: dict[str, Path], manifest_path: Path | str) -> None:
     is committed; a drifted hash raises :class:`ValueError`. Paths absent from
     the manifest are ignored, so a new file added to a source is not an error
     until the manifest is regenerated.
+
+    ``drift_hint`` closes the drift message. DrugBank passes its own: its
+    manifest pins a local registered file, so "upstream moved" is the wrong
+    diagnosis and re-pinning the wrong fix.
     """
     manifest_path = Path(manifest_path)
     if not manifest_path.exists():
         _lg.warning(
             "%s absent; this source is unpinned. Regenerate it with the "
-            "module's manifest writer and commit the result.",
+            "module's manifest writer.",
             manifest_path.name,
         )
         return
@@ -53,8 +71,7 @@ def verify(raw_paths: dict[str, Path], manifest_path: Path | str) -> None:
     if drifted:
         raise ValueError(
             f"{len(drifted)} file(s) differ from the release pinned in "
-            f"{manifest_path.name} ({drifted}); upstream moved. Recheck every "
-            f"count derived from this source, then re-pin."
+            f"{manifest_path.name} ({drifted}); {drift_hint}"
         )
 
 

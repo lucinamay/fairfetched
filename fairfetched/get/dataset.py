@@ -4,7 +4,15 @@ from pathlib import Path
 
 from polars import LazyFrame
 
-from fairfetched.get import _demo, adrecs, adrecs_target, chembl, papyrus, sider
+from fairfetched.get import (
+    _demo,
+    adrecs,
+    adrecs_target,
+    chembl,
+    drugbank,
+    papyrus,
+    sider,
+)
 from fairfetched.get._chembl_tables import ChemblTables
 from fairfetched.get._papyrus_tables import PapyrusTables
 from fairfetched.utils import BASE_DIR
@@ -95,6 +103,20 @@ class _SiderView(_View):
     @property
     def frequencies(self) -> LazyFrame:
         return self._views["frequencies"]
+
+
+class _DrugbankView(_View):
+    @property
+    def drugs(self) -> LazyFrame:
+        return self._views["drugs"]
+
+    @property
+    def targets(self) -> LazyFrame:
+        return self._views["targets"]
+
+    @property
+    def interactions(self) -> LazyFrame:
+        return self._views["interactions"]
 
 
 class _SourceTables:
@@ -363,7 +385,9 @@ class Adrecs(_Base):
         raw_paths = adrecs.ensure_raw_files(
             str(version), raw_dir=dir / "raw", force=force
         )
-        parquet_paths = adrecs.ensure_parquet_tables(raw_paths, table_dir=dir / "parquet")
+        parquet_paths = adrecs.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
         return cls(
             version=str(version),
             raw_paths=raw_paths,
@@ -472,7 +496,9 @@ class Sider(_Base):
         raw_paths = sider.ensure_raw_files(
             str(version), raw_dir=dir / "raw", force=force
         )
-        parquet_paths = sider.ensure_parquet_tables(raw_paths, table_dir=dir / "parquet")
+        parquet_paths = sider.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
         return cls(
             version=str(version),
             raw_paths=raw_paths,
@@ -486,3 +512,81 @@ class Sider(_Base):
         cls, root_dir: Path | str = f"{BASE_DIR}/sider", force: bool = False
     ) -> "Sider":
         return cls.from_version(sider.latest(), root_dir=root_dir, force=force)
+
+
+@dataclass(frozen=True, repr=False)
+class Drugbank(_Base):
+    """DrugBank wrapper. DrugBank is licensed, so there is no download: register
+    your own ``full database.xml`` (or the release ``.zip``) once with
+    ``from_xml``, then reload it with ``from_version``.
+
+        db = Drugbank.from_xml("~/Downloads/drugbank_all_full_database.xml.zip",
+                               version="5.1.13")
+        db.view.targets.sink_parquet("drugbank_targets.parquet")
+        db.tables["drug_interactions"].collect_schema()
+
+    ``view`` holds ``drugs``, ``targets``, ``interactions``; ``tables`` holds the
+    eight raw tables (``synonyms``, ``external_identifiers``, ``properties``,
+    ``atc_codes``, ``categories`` and the three above). See
+    :mod:`fairfetched.get.drugbank` for how the XML is stored and pinned.
+    """
+
+    module: DatasetGetModule = drugbank
+
+    @staticmethod
+    def get_available_versions():
+        return drugbank.available_versions()
+
+    @cached_property
+    def view(self) -> _DrugbankView:
+        return _DrugbankView(self)
+
+    @cached_property
+    def tables(self) -> dict[str, LazyFrame]:
+        return self.lfs
+
+    @classmethod
+    def _build(
+        cls,
+        version: str,
+        root_dir: Path | str,
+        xml_path: Path | str | None = None,
+        force: bool = False,
+    ) -> "Drugbank":
+        dir = Path(root_dir) / version
+        raw_paths = drugbank.ensure_raw_files(
+            version, raw_dir=dir / "raw", xml_path=xml_path, force=force
+        )
+        parquet_paths = drugbank.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=version,
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_xml(
+        cls,
+        xml_path: Path | str,
+        version: str | None = None,
+        root_dir: Path | str = f"{BASE_DIR}/drugbank",
+        force: bool = False,
+    ) -> "Drugbank":
+        """Register a licensed DrugBank XML/zip and build its Parquet tables.
+        Without ``version``, the XML root's ``version`` attribute names the
+        directory."""
+        version = str(version) if version else drugbank.version_of(xml_path)
+        return cls._build(version, root_dir, xml_path=xml_path, force=force)
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str,
+        root_dir: Path | str = f"{BASE_DIR}/drugbank",
+    ) -> "Drugbank":
+        """Reload an already-registered version; raises if it was never registered."""
+        return cls._build(str(version), root_dir)

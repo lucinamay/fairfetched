@@ -1,6 +1,6 @@
-from .dataset import Adrecs, AdrecsTarget, Chembl, Papyrus, Sider
+from .dataset import Adrecs, AdrecsTarget, Chembl, Drugbank, Papyrus, Sider
 
-__all__ = ["Adrecs", "AdrecsTarget", "Chembl", "Papyrus", "Sider"]
+__all__ = ["Adrecs", "AdrecsTarget", "Chembl", "Drugbank", "Papyrus", "Sider"]
 
 if __name__ == "__main__":
     from .papyrus import ensure_raw_files, latest
