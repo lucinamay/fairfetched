@@ -115,6 +115,10 @@ class _DrugbankView(_View):
         return self._views["targets"]
 
     @property
+    def go_classifiers(self) -> LazyFrame:
+        return self._views["go_classifiers"]
+
+    @property
     def interactions(self) -> LazyFrame:
         return self._views["interactions"]
 

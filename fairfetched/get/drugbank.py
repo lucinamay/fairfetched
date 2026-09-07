@@ -80,6 +80,14 @@ _COLUMNS: dict[str, list[str]] = {
         "uniprot_id",
         "gene_name",
     ],
+    "go_classifiers": [
+        "drugbank_id",
+        "kind",
+        "target_id",
+        "uniprot_id",
+        "category",
+        "description",
+    ],
     "drug_interactions": [
         "drugbank_id",
         "interacts_with_id",
@@ -289,6 +297,20 @@ def _flatten(drug, rows: dict[str, list]) -> None:
                         "gene_name": p.findtext("db:gene-name", namespaces=_NS),
                     }
                 )
+                # DrugBank carries the GO term name only, no GO id.
+                for go in p.findall("db:go-classifiers/db:go-classifier", _NS):
+                    rows["go_classifiers"].append(
+                        {
+                            "drugbank_id": primary,
+                            "kind": common["kind"],
+                            "target_id": common["target_id"],
+                            "uniprot_id": p.get("id"),
+                            "category": go.findtext("db:category", namespaces=_NS),
+                            "description": go.findtext(
+                                "db:description", namespaces=_NS
+                            ),
+                        }
+                    )
 
     for x in drug.findall("db:drug-interactions/db:drug-interaction", _NS):
         rows["drug_interactions"].append(
@@ -356,6 +378,9 @@ def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     - ``drugs``: the ``drugs`` table verbatim (identifiers, groups, description)
     - ``targets``: every drug-target/enzyme/carrier/transporter row with the drug
       name; one row per bound polypeptide (``uniprot_id``, ``gene_name``)
+    - ``go_classifiers``: one row per GO term on a bound polypeptide, with the
+      drug name; ``category`` is ``function``/``process``/``component``
+      unfiltered, ``kind`` distinguishes target from enzyme/carrier/transporter
     - ``interactions``: every drug-drug interaction with the subject drug's name
     """
     lfs = cleanly_scan_parquet_tables(parquet_paths)
@@ -363,6 +388,9 @@ def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     return {
         "drugs": lfs["drugs"],
         "targets": lfs["targets"].join(named, on="drugbank_id", how="left"),
+        "go_classifiers": lfs["go_classifiers"].join(
+            named, on="drugbank_id", how="left"
+        ),
         "interactions": lfs["drug_interactions"].join(
             named, on="drugbank_id", how="left"
         ),

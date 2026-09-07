@@ -67,6 +67,12 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
         <known-action>yes</known-action>
         <polypeptide id="P00000" source="Swiss-Prot">
           <gene-name>FAKE1</gene-name>
+          <go-classifiers>
+            <go-classifier><category>function</category><description>protein binding</description></go-classifier>
+            <go-classifier><category>function</category><description>ATP binding</description></go-classifier>
+            <go-classifier><category>process</category><description>signal transduction</description></go-classifier>
+            <go-classifier><category>component</category><description>plasma membrane</description></go-classifier>
+          </go-classifiers>
         </polypeptide>
       </target>
     </targets>
@@ -79,6 +85,19 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
         <polypeptide id="P11111"><gene-name>FAKE2</gene-name></polypeptide>
       </enzyme>
     </enzymes>
+    <carriers>
+      <carrier>
+        <id>BE9000003</id>
+        <name>Fake carrier</name>
+        <organism>Humans</organism>
+        <polypeptide id="P22222">
+          <gene-name>FAKE3</gene-name>
+          <go-classifiers>
+            <go-classifier><category>function</category><description>lipid binding</description></go-classifier>
+          </go-classifiers>
+        </polypeptide>
+      </carrier>
+    </carriers>
     <drug-interactions>
       <drug-interaction>
         <drugbank-id>DB90002</drugbank-id>
@@ -189,11 +208,49 @@ class TestParse:
 
     def test_targets_carry_polypeptide_and_kind(self, parquet_paths):
         t = pl.read_parquet(parquet_paths["targets"])
-        assert set(t["kind"]) == {"target", "enzyme"}
+        assert set(t["kind"]) == {"target", "enzyme", "carrier"}
         recep = t.filter(target_id="BE9000001").row(0, named=True)
         assert recep["uniprot_id"] == "P00000"
         assert recep["gene_name"] == "FAKE1"
         assert recep["actions"] == "inhibitor"
+
+    def test_go_classifiers_one_row_per_term(self, parquet_paths):
+        g = pl.read_parquet(parquet_paths["go_classifiers"])
+        assert g.height == 5  # 4 on the target's P00000, 1 on the carrier's P22222
+        assert set(g["drugbank_id"]) == {"DB90001"}
+        assert set(zip(g["kind"], g["target_id"], g["uniprot_id"])) == {
+            ("target", "BE9000001", "P00000"),
+            ("carrier", "BE9000003", "P22222"),
+        }
+
+    def test_go_kind_separates_targets_from_the_rest(self, parquet_paths):
+        # the consumer filters kind == "target" for parity with the reference
+        g = pl.read_parquet(parquet_paths["go_classifiers"])
+        assert sorted(g.filter(kind="target", category="function")["description"]) == [
+            "ATP binding",
+            "protein binding",
+        ]
+        assert g.filter(kind="carrier")["description"].to_list() == ["lipid binding"]
+
+    def test_go_categories_kept_unfiltered_but_distinguishable(self, parquet_paths):
+        g = pl.read_parquet(parquet_paths["go_classifiers"])
+        assert sorted(g.filter(category="function")["description"]) == [
+            "ATP binding",
+            "lipid binding",
+            "protein binding",
+        ]
+        assert g.filter(category="process")["description"].to_list() == [
+            "signal transduction"
+        ]
+        assert g.filter(category="component")["description"].to_list() == [
+            "plasma membrane"
+        ]
+
+    def test_polypeptide_without_classifiers_emits_no_row(self, parquet_paths):
+        # the enzyme's polypeptide P11111 has no <go-classifiers>
+        g = pl.read_parquet(parquet_paths["go_classifiers"])
+        assert g.filter(uniprot_id="P11111").height == 0
+        assert "P11111" in pl.read_parquet(parquet_paths["targets"])["uniprot_id"]
 
     def test_properties_split_by_source_kind(self, parquet_paths):
         p = pl.read_parquet(parquet_paths["properties"])
@@ -217,6 +274,13 @@ class TestViews:
     def test_targets_view_carries_drug_name(self, parquet_paths):
         t = drugbank.build_views(parquet_paths)["targets"].collect()
         assert set(t.filter(pl.col("target_id") == "BE9000001")["name"]) == {"Fakezumab"}
+
+    def test_go_classifiers_view_reproduces_the_reference_term_set(self, parquet_paths):
+        # what the consumer's drugbank_go_function_index computes, per drug
+        g = drugbank.build_views(parquet_paths)["go_classifiers"].collect()
+        assert set(g["name"]) == {"Fakezumab"}
+        terms = sorted(set(g.filter(kind="target", category="function")["description"]))
+        assert terms == ["ATP binding", "protein binding"]
 
     def test_interactions_view_carries_subject_name(self, parquet_paths):
         i = drugbank.build_views(parquet_paths)["interactions"].collect()
