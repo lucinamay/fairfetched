@@ -527,12 +527,12 @@ class Drugbank(_Base):
         db = Drugbank.from_xml("~/Downloads/drugbank_all_full_database.xml.zip",
                                version="5.1.13")
         db.view.targets.sink_parquet("drugbank_targets.parquet")
-        db.tables["drug_interactions"].collect_schema()
+        db.tables["drug"].collect_schema()
 
-    ``view`` holds ``drugs``, ``targets``, ``interactions``; ``tables`` holds the
-    eight raw tables (``synonyms``, ``external_identifiers``, ``properties``,
-    ``atc_codes``, ``categories`` and the three above). See
-    :mod:`fairfetched.get.drugbank` for how the XML is stored and pinned.
+    ``view`` holds the flat ``drugs``, ``targets``, ``go_classifiers`` and
+    ``interactions``; ``tables`` holds the four nested raw tables (``drug``,
+    ``biomolecule``, ``pathway``, ``drug_drug``). See
+    :mod:`fairfetched.get.drugbank` for the layout and how the XML is pinned.
     """
 
     module: DatasetGetModule = drugbank

@@ -5,6 +5,7 @@ only has to exercise the schema paths the parser walks."""
 import gzip
 import hashlib
 import json
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -14,7 +15,9 @@ import pytest
 from fairfetched.get import drugbank
 
 # Two top-level drugs. Drug 2 carries a <pathways> block with a *nested* <drug>
-# that must not be counted as a third drug.
+# that must not be counted as a third drug, shares bio-entity BE9000001 with drug 1
+# under a different kind, and binds BE9000009 "DNA", which has no <polypeptide>.
+# Drug 3 binds nothing at all and joins no pathway.
 _XML = """<?xml version="1.0" encoding="UTF-8"?>
 <drugbank xmlns="http://www.drugbank.ca" version="5.1" exported-on="2025-01-01">
   <drug type="biotech">
@@ -98,6 +101,13 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
         </polypeptide>
       </carrier>
     </carriers>
+    <salts>
+      <salt>
+        <drugbank-id primary="true">DBSALT90001</drugbank-id>
+        <name>Fakezumab hydrochloride</name>
+        <unii>SALT123</unii>
+      </salt>
+    </salts>
     <drug-interactions>
       <drug-interaction>
         <drugbank-id>DB90002</drugbank-id>
@@ -110,6 +120,38 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
     <drugbank-id primary="true">DB90002</drugbank-id>
     <name>Placebix</name>
     <groups><group>approved</group></groups>
+    <enzymes>
+      <enzyme>
+        <id>BE9000001</id>
+        <name>Fake receptor</name>
+        <organism>Humans</organism>
+        <actions><action>substrate</action></actions>
+        <polypeptide id="P00000" source="Swiss-Prot">
+          <gene-name>FAKE1</gene-name>
+          <go-classifiers>
+            <go-classifier><category>function</category><description>protein binding</description></go-classifier>
+            <go-classifier><category>function</category><description>ATP binding</description></go-classifier>
+            <go-classifier><category>process</category><description>signal transduction</description></go-classifier>
+            <go-classifier><category>component</category><description>plasma membrane</description></go-classifier>
+          </go-classifiers>
+        </polypeptide>
+      </enzyme>
+    </enzymes>
+    <targets>
+      <target>
+        <id>BE9000009</id>
+        <name>DNA</name>
+        <organism>Humans</organism>
+        <actions><action>intercalation</action></actions>
+      </target>
+    </targets>
+    <drug-interactions>
+      <drug-interaction>
+        <drugbank-id>DB90001</drugbank-id>
+        <name>Fakezumab</name>
+        <description>Risk increased.</description>
+      </drug-interaction>
+    </drug-interactions>
     <pathways>
       <pathway>
         <smpdb-id>SMP0000001</smpdb-id>
@@ -119,12 +161,29 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
             <drugbank-id>DB90001</drugbank-id>
             <name>Fakezumab</name>
           </drug>
+          <drug>
+            <drugbank-id>DB90002</drugbank-id>
+            <name>Placebix</name>
+          </drug>
         </drugs>
       </pathway>
     </pathways>
   </drug>
+  <drug type="small molecule">
+    <drugbank-id primary="true">DB90003</drugbank-id>
+    <name>Nullaxin</name>
+    <groups><group>experimental</group></groups>
+  </drug>
 </drugbank>
 """
+
+
+def _drug(parquet_paths, drugbank_id: str) -> dict:
+    return (
+        pl.read_parquet(parquet_paths["drug"])
+        .filter(drugbank_id=drugbank_id)
+        .row(0, named=True)
+    )
 
 
 @pytest.fixture
@@ -191,77 +250,102 @@ class TestRegister:
             drugbank.version_of(p)
 
 
+
+
 class TestParse:
-    def test_all_tables_written(self, parquet_paths):
-        assert set(parquet_paths) == set(drugbank._COLUMNS)
+    def test_four_tables_written(self, parquet_paths):
+        assert set(parquet_paths) == {"drug", "biomolecule", "pathway", "drug_drug"}
         assert all(p.exists() for p in parquet_paths.values())
+        # drug_drug is a directory of part-files; the others are single files
+        assert parquet_paths["drug_drug"].is_dir()
 
     def test_nested_pathway_drug_not_counted(self, parquet_paths):
-        drugs = pl.read_parquet(parquet_paths["drugs"])
-        assert sorted(drugs["drugbank_id"]) == ["DB90001", "DB90002"]
+        drugs = pl.read_parquet(parquet_paths["drug"])
+        assert sorted(drugs["drugbank_id"]) == ["DB90001", "DB90002", "DB90003"]
 
-    def test_primary_id_and_groups(self, parquet_paths):
-        row = pl.read_parquet(parquet_paths["drugs"]).filter(drugbank_id="DB90001").row(0, named=True)
-        assert row["name"] == "Fakezumab"
-        assert row["type"] == "biotech"
-        assert row["groups"] == "approved;investigational"
+    def test_primary_id_extracted_secondary_kept(self, parquet_paths):
+        row = _drug(parquet_paths, "DB90001")
+        assert row["drugbank_id"] == "DB90001"
+        assert [(i["@primary"], i["$"]) for i in row["drugbank-id"]] == [
+            ("true", "DB90001"),
+            (None, "BTD90001"),
+        ]
 
-    def test_targets_carry_polypeptide_and_kind(self, parquet_paths):
-        t = pl.read_parquet(parquet_paths["targets"])
-        assert set(t["kind"]) == {"target", "enzyme", "carrier"}
-        recep = t.filter(target_id="BE9000001").row(0, named=True)
-        assert recep["uniprot_id"] == "P00000"
-        assert recep["gene_name"] == "FAKE1"
-        assert recep["actions"] == "inhibitor"
+    def test_blocks_stay_nested_under_their_tag_names(self, parquet_paths):
+        row = _drug(parquet_paths, "DB90001")
+        assert row["groups"] == ["approved", "investigational"]
+        assert row["cas-number"] == "000-00-0"
+        assert row["@type"] == "biotech"
+        assert [s["$"] for s in row["synonyms"]] == ["Fake-zumab", "FZB"]
+        assert row["atc-codes"][0]["@code"] == "X01XX99"
+        assert [lv["@code"] for lv in row["atc-codes"][0]["level"]] == ["X01XX", "X"]
+        assert [p["kind"] for p in row["calculated-properties"]] == ["logP"]
 
-    def test_go_classifiers_one_row_per_term(self, parquet_paths):
-        g = pl.read_parquet(parquet_paths["go_classifiers"])
-        assert g.height == 5  # 4 on the target's P00000, 1 on the carrier's P22222
-        assert set(g["drugbank_id"]) == {"DB90001"}
-        assert set(zip(g["kind"], g["target_id"], g["uniprot_id"])) == {
-            ("target", "BE9000001", "P00000"),
-            ("carrier", "BE9000003", "P22222"),
+    def test_salt_keeps_its_own_primary_id(self, parquet_paths):
+        # <salt> carries a second <drugbank-id primary="true">; it is not the drug's
+        salt = _drug(parquet_paths, "DB90001")["salts"][0]
+        assert salt["drugbank-id"] == {"@primary": "true", "$": "DBSALT90001"}
+        assert salt["name"] == "Fakezumab hydrochloride"
+
+    def test_binds_carries_the_edge_not_the_entity(self, parquet_paths):
+        binds = {b["be_id"]: b for b in _drug(parquet_paths, "DB90001")["binds"]}
+        assert {k: b["kind"] for k, b in binds.items()} == {
+            "BE9000001": "target",
+            "BE9000002": "enzyme",
+            "BE9000003": "carrier",
         }
+        assert binds["BE9000001"]["actions"] == ["inhibitor"]
+        assert binds["BE9000001"]["known-action"] == "yes"
+        assert binds["BE9000003"]["actions"] is None
 
-    def test_go_kind_separates_targets_from_the_rest(self, parquet_paths):
-        # the consumer filters kind == "target" for parity with the reference
-        g = pl.read_parquet(parquet_paths["go_classifiers"])
-        assert sorted(g.filter(kind="target", category="function")["description"]) == [
-            "ATP binding",
-            "protein binding",
+    def test_biomolecule_deduped_across_drugs_and_kinds(self, parquet_paths):
+        # BE9000001 is DB90001's target and DB90002's enzyme: one entity row, two edges
+        bio = pl.read_parquet(parquet_paths["biomolecule"])
+        assert sorted(bio["be_id"]) == [
+            "BE9000001",
+            "BE9000002",
+            "BE9000003",
+            "BE9000009",
         ]
-        assert g.filter(kind="carrier")["description"].to_list() == ["lipid binding"]
-
-    def test_go_categories_kept_unfiltered_but_distinguishable(self, parquet_paths):
-        g = pl.read_parquet(parquet_paths["go_classifiers"])
-        assert sorted(g.filter(category="function")["description"]) == [
-            "ATP binding",
-            "lipid binding",
-            "protein binding",
-        ]
-        assert g.filter(category="process")["description"].to_list() == [
-            "signal transduction"
-        ]
-        assert g.filter(category="component")["description"].to_list() == [
-            "plasma membrane"
-        ]
-
-    def test_polypeptide_without_classifiers_emits_no_row(self, parquet_paths):
-        # the enzyme's polypeptide P11111 has no <go-classifiers>
-        g = pl.read_parquet(parquet_paths["go_classifiers"])
-        assert g.filter(uniprot_id="P11111").height == 0
-        assert "P11111" in pl.read_parquet(parquet_paths["targets"])["uniprot_id"]
-
-    def test_properties_split_by_source_kind(self, parquet_paths):
-        p = pl.read_parquet(parquet_paths["properties"])
-        assert set(p["source_kind"]) == {"calculated", "experimental"}
-
-    def test_external_identifiers(self, parquet_paths):
-        x = pl.read_parquet(parquet_paths["external_identifiers"])
-        assert dict(zip(x["resource"], x["identifier"])) == {
-            "PubChem Compound": "99999999",
-            "UniProtKB": "P00000",
+        assert bio.filter(be_id="BE9000001").height == 1
+        kinds = {
+            (d, b["kind"])
+            for d in ("DB90001", "DB90002")
+            for b in _drug(parquet_paths, d)["binds"]
+            if b["be_id"] == "BE9000001"
         }
+        assert kinds == {("DB90001", "target"), ("DB90002", "enzyme")}
+
+    def test_non_protein_biomolecule_kept(self, parquet_paths):
+        # BE9000009 "DNA" has no <polypeptide>; a table keyed on uniprot_id loses it
+        dna = pl.read_parquet(parquet_paths["biomolecule"]).filter(be_id="BE9000009")
+        assert dna.row(0, named=True)["name"] == "DNA"
+        assert dna.row(0, named=True)["polypeptide"] is None
+
+    def test_polypeptide_nested_under_the_entity(self, parquet_paths):
+        bio = pl.read_parquet(parquet_paths["biomolecule"]).filter(be_id="BE9000001")
+        poly = bio.row(0, named=True)["polypeptide"]
+        assert len(poly) == 1
+        assert poly[0]["@id"] == "P00000"
+        assert poly[0]["gene-name"] == "FAKE1"
+        assert len(poly[0]["go-classifiers"]) == 4
+
+    def test_pathway_hoisted_and_reachable_from_the_drug(self, parquet_paths):
+        pw = pl.read_parquet(parquet_paths["pathway"])
+        assert pw.height == 1
+        row = pw.row(0, named=True)
+        assert row["smpdb-id"] == "SMP0000001"
+        assert [d["name"] for d in row["drugs"]] == ["Fakezumab", "Placebix"]
+        assert _drug(parquet_paths, "DB90002")["pathway_ids"] == ["SMP0000001"]
+        assert _drug(parquet_paths, "DB90001")["pathway_ids"] == []
+
+    def test_drug_drug_stored_directed(self, parquet_paths):
+        ddi = pl.read_parquet(parquet_paths["drug_drug"]).sort("drugbank_id")
+        assert list(zip(ddi["drugbank_id"], ddi["interacts_with_id"])) == [
+            ("DB90001", "DB90002"),
+            ("DB90002", "DB90001"),
+        ]
+        assert "interacts_with_name" not in ddi.columns  # join-recoverable, not stored
 
     def test_reparse_skipped_when_tables_exist(self, tmp_path, raw_paths):
         first = drugbank.ensure_parquet_tables(raw_paths, tmp_path / "pq")
@@ -270,24 +354,92 @@ class TestParse:
         assert {t: p.stat().st_mtime_ns for t, p in again.items()} == mtimes
 
 
+class TestDeclaredShape:
+    """The three declared sets exist so a schema change in a new DrugBank release
+    stops the parse instead of silently writing rows that disagree on shape."""
+
+    def test_undeclared_repeat_raises(self):
+        e = ET.fromstring("<drug><name>a</name><name>b</name></drug>")
+        with pytest.raises(ValueError, match="repeats <name>"):
+            drugbank._obj(e)
+
+    def test_undeclared_attributed_leaf_raises(self):
+        e = ET.fromstring('<drug><state code="s">solid</state></drug>')
+        with pytest.raises(ValueError, match="_ATTR_LEAF"):
+            drugbank._obj(e)
+
+    def test_container_gaining_attributes_raises(self):
+        e = ET.fromstring('<groups format="x"><group>approved</group></groups>')
+        with pytest.raises(ValueError, match="container <groups>"):
+            drugbank._obj(e)
+
+    def test_whitespace_only_text_is_null_not_a_string(self):
+        # an unpopulated <references/> must not become a string where its populated
+        # siblings are structs
+        e = ET.fromstring("<drug><references>\n  </references></drug>")
+        assert drugbank._obj(e) == {"references": None}
+
+
 class TestViews:
-    def test_targets_view_carries_drug_name(self, parquet_paths):
+    def test_drugs_view_flattens_groups(self, parquet_paths):
+        d = drugbank.build_views(parquet_paths)["drugs"].collect()
+        row = d.filter(drugbank_id="DB90001").row(0, named=True)
+        assert row["groups"] == "approved;investigational"
+        assert row["type"] == "biotech"
+        assert row["cas_number"] == "000-00-0"
+
+    def test_targets_view_one_row_per_bound_polypeptide(self, parquet_paths):
         t = drugbank.build_views(parquet_paths)["targets"].collect()
-        assert set(t.filter(pl.col("target_id") == "BE9000001")["name"]) == {"Fakezumab"}
+        assert t.height == 5  # 3 for DB90001, 2 for DB90002
+        recep = t.filter(drugbank_id="DB90001", target_id="BE9000001").row(0, named=True)
+        assert recep["name"] == "Fakezumab"
+        assert recep["target_name"] == "Fake receptor"
+        assert recep["uniprot_id"] == "P00000"
+        assert recep["gene_name"] == "FAKE1"
+        assert recep["actions"] == "inhibitor"
+        assert recep["known_action"] == "yes"
 
-    def test_go_classifiers_view_reproduces_the_reference_term_set(self, parquet_paths):
-        # what the consumer's drugbank_go_function_index computes, per drug
+    def test_targets_view_skips_a_drug_that_binds_nothing(self, parquet_paths):
+        # DB90003 has no CETT block; its empty list must not explode to a null row
+        t = drugbank.build_views(parquet_paths)["targets"].collect()
+        assert t.filter(drugbank_id="DB90003").height == 0
+
+    def test_targets_view_keeps_an_entry_that_binds_no_polypeptide(self, parquet_paths):
+        t = drugbank.build_views(parquet_paths)["targets"]
+        dna = t.filter(target_id="BE9000009").collect().row(0, named=True)
+        assert dna["target_name"] == "DNA"
+        assert dna["uniprot_id"] is None
+
+    def test_go_classifiers_view_is_per_drug(self, parquet_paths):
         g = drugbank.build_views(parquet_paths)["go_classifiers"].collect()
-        assert set(g["name"]) == {"Fakezumab"}
-        terms = sorted(set(g.filter(kind="target", category="function")["description"]))
-        assert terms == ["ATP binding", "protein binding"]
+        assert g.height == 9  # DB90001: 4 + 1, DB90002: 4
+        assert sorted(
+            g.filter(drugbank_id="DB90001", kind="target", category="function")[
+                "description"
+            ]
+        ) == ["ATP binding", "protein binding"]
+        assert g.filter(kind="carrier")["description"].to_list() == ["lipid binding"]
+        assert g.filter(uniprot_id="P11111").height == 0  # P11111 has no classifiers
 
-    def test_interactions_view_carries_subject_name(self, parquet_paths):
+    def test_go_kind_follows_the_edge_not_the_entity(self, parquet_paths):
+        # the same BE9000001/P00000 terms appear as target terms for DB90001 and as
+        # enzyme terms for DB90002
+        g = drugbank.build_views(parquet_paths)["go_classifiers"].collect()
+        assert set(
+            zip(
+                g.filter(uniprot_id="P00000")["drugbank_id"],
+                g.filter(uniprot_id="P00000")["kind"],
+            )
+        ) == {("DB90001", "target"), ("DB90002", "enzyme")}
+
+    def test_interactions_view_names_both_drugs(self, parquet_paths):
         i = drugbank.build_views(parquet_paths)["interactions"].collect()
-        assert i.row(0, named=True)["name"] == "Fakezumab"
-        assert i.row(0, named=True)["interacts_with_id"] == "DB90002"
+        assert set(zip(i["name"], i["interacts_with_name"])) == {
+            ("Fakezumab", "Placebix"),
+            ("Placebix", "Fakezumab"),
+        }
 
     def test_empty_string_nulled_on_scan(self, parquet_paths):
-        # drug 2 has no description -> stored "", nulled on scan
-        drugs = drugbank.cleanly_scan_parquet(parquet_paths["drugs"]).collect()
+        # drug 2 has no <description> element at all
+        drugs = drugbank.cleanly_scan_parquet(parquet_paths["drug"]).collect()
         assert drugs.filter(drugbank_id="DB90002").row(0, named=True)["description"] is None
