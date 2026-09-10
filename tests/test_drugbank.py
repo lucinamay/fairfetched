@@ -210,13 +210,16 @@ class TestRegister:
         assert gzip.decompress(gz.read_bytes()) == _XML.encode()  # byte-identical
         m = json.loads((gz.parent / "_manifest.json").read_text())
         assert m["version"] == "5.1.13"
-        assert m["files"]["full_database"]["sha256"] == hashlib.sha256(
-            gz.read_bytes()
-        ).hexdigest()
+        assert (
+            m["files"]["full_database"]["sha256"]
+            == hashlib.sha256(gz.read_bytes()).hexdigest()
+        )
 
     def test_idempotent_and_verifies(self, tmp_path, xml_file):
         a = drugbank.register(xml_file, "5.1.13", tmp_path / "raw")
-        b = drugbank.register(xml_file, "5.1.13", tmp_path / "raw")  # no force: verify path
+        b = drugbank.register(
+            xml_file, "5.1.13", tmp_path / "raw"
+        )  # no force: verify path
         assert a == b
 
     def test_tampered_cache_raises(self, raw_paths):
@@ -248,8 +251,6 @@ class TestRegister:
         p.write_text('<drugbank xmlns="http://www.drugbank.ca"></drugbank>')
         with pytest.raises(ValueError, match="no version attribute"):
             drugbank.version_of(p)
-
-
 
 
 class TestParse:
@@ -361,23 +362,23 @@ class TestDeclaredShape:
     def test_undeclared_repeat_raises(self):
         e = ET.fromstring("<drug><name>a</name><name>b</name></drug>")
         with pytest.raises(ValueError, match="repeats <name>"):
-            drugbank._obj(e)
+            drugbank._xml_element(e)
 
     def test_undeclared_attributed_leaf_raises(self):
         e = ET.fromstring('<drug><state code="s">solid</state></drug>')
         with pytest.raises(ValueError, match="_ATTR_LEAF"):
-            drugbank._obj(e)
+            drugbank._xml_element(e)
 
     def test_container_gaining_attributes_raises(self):
         e = ET.fromstring('<groups format="x"><group>approved</group></groups>')
         with pytest.raises(ValueError, match="container <groups>"):
-            drugbank._obj(e)
+            drugbank._xml_element(e)
 
     def test_whitespace_only_text_is_null_not_a_string(self):
         # an unpopulated <references/> must not become a string where its populated
         # siblings are structs
         e = ET.fromstring("<drug><references>\n  </references></drug>")
-        assert drugbank._obj(e) == {"references": None}
+        assert drugbank._xml_element(e) == {"references": None}
 
 
 class TestViews:
@@ -391,7 +392,9 @@ class TestViews:
     def test_targets_view_one_row_per_bound_polypeptide(self, parquet_paths):
         t = drugbank.build_views(parquet_paths)["targets"].collect()
         assert t.height == 5  # 3 for DB90001, 2 for DB90002
-        recep = t.filter(drugbank_id="DB90001", target_id="BE9000001").row(0, named=True)
+        recep = t.filter(drugbank_id="DB90001", target_id="BE9000001").row(
+            0, named=True
+        )
         assert recep["name"] == "Fakezumab"
         assert recep["target_name"] == "Fake receptor"
         assert recep["uniprot_id"] == "P00000"
@@ -400,7 +403,7 @@ class TestViews:
         assert recep["known_action"] == "yes"
 
     def test_targets_view_skips_a_drug_that_binds_nothing(self, parquet_paths):
-        # DB90003 has no CETT block; its empty list must not explode to a null row
+        # DB90003 has no _BIOMOL_TERM block; its empty list must not explode to a null row
         t = drugbank.build_views(parquet_paths)["targets"].collect()
         assert t.filter(drugbank_id="DB90003").height == 0
 
@@ -442,4 +445,7 @@ class TestViews:
     def test_empty_string_nulled_on_scan(self, parquet_paths):
         # drug 2 has no <description> element at all
         drugs = drugbank.cleanly_scan_parquet(parquet_paths["drug"]).collect()
-        assert drugs.filter(drugbank_id="DB90002").row(0, named=True)["description"] is None
+        assert (
+            drugs.filter(drugbank_id="DB90002").row(0, named=True)["description"]
+            is None
+        )

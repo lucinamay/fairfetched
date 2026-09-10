@@ -151,16 +151,12 @@ def ensure_raw_files(
 
 # -- parse XML -> Parquet -------------------------------------------------
 
-# Three declared shape facts, each measured over the whole 1.6 GB file.
-
-# Container elements: <xs> wrapping repeated <x>, flattened to a bare list. NB
-# <atc-code> also has exactly one child tag but carries @code, so it is a record.
 _BOX = frozenset(
     {
         "actions",
         "affected-organisms",
         "articles",
-        "atc-codes",
+        "atc-codes",  # has @code => record
         "attachments",
         "calculated-properties",
         "carriers",
@@ -198,9 +194,7 @@ _BOX = frozenset(
     }
 )
 
-# (parent, child) pairs that repeat without a container, so they are always a
-# list even at length one. Max seen: 45 polypeptides on one target, 91
-# substituents on one classification, 11 drugbank-ids on one drug.
+
 _PARENT_CHILD_PAIRS = frozenset(
     {
         ("drug", "drugbank-id"),
@@ -215,9 +209,8 @@ _PARENT_CHILD_PAIRS = frozenset(
 )
 
 # (parent, leaf) pairs whose text carries attributes, rendered {"@attr":…, "$": text}.
-# Declared because @primary is present on a drug's primary <drugbank-id> and absent
-# on its secondaries: inferring per element would make one list hold both a struct
-# and a string. An undeclared attributed leaf raises rather than silently diverging.
+# @primary is present on a drug's primary <drugbank-id> and absent on second
+# undeclared attributed raises
 _ATTR_LEAF = frozenset(
     {
         ("drug", "drugbank-id"),
@@ -233,9 +226,10 @@ _ATTR_LEAF = frozenset(
     }
 )
 
-_CETT = ("targets", "enzymes", "carriers", "transporters")
-# what belongs to *this drug's* relationship with the bio-entity, not to the entity
-_EDGE = (
+_BIOMOL_TERMS = ("targets", "enzymes", "carriers", "transporters")
+
+# drug's-bio-entity pair-specific
+_DRUG_BIOMOL_ATTR = (
     "@position",
     "actions",
     "known-action",
@@ -256,7 +250,7 @@ def _tag(elem) -> str:
     return elem.tag.split("}")[-1]
 
 
-def _obj(elem, parent: str = ""):
+def _xml_element(elem, parent: str = ""):
     """One XML element as nested dict/list/str, faithful to the tree.
 
     Whitespace-only text becomes ``None`` so that an unpopulated ``<references/>``
@@ -266,7 +260,7 @@ def _obj(elem, parent: str = ""):
     if tag in _BOX:
         if elem.attrib:
             raise ValueError(f"container <{tag}> gained attributes {list(elem.attrib)}")
-        return [_obj(k, tag) for k in elem]
+        return [_xml_element(k, tag) for k in elem]
 
     attrs = {f"@{k.split('}')[-1]}": v for k, v in elem.attrib.items()}
     if not len(elem):
@@ -283,14 +277,14 @@ def _obj(elem, parent: str = ""):
     for child in elem:
         ct = _tag(child)
         if (tag, ct) in _PARENT_CHILD_PAIRS:
-            out.setdefault(ct, []).append(_obj(child, tag))
+            out.setdefault(ct, []).append(_xml_element(child, tag))
         elif ct in out:
             raise ValueError(
                 f"<{tag}> repeats <{ct}>; add ('{tag}', '{ct}') to _MULTI, "
                 f"or '{tag}' to _BOX if it is a container"
             )
         else:
-            out[ct] = _obj(child, tag)
+            out[ct] = _xml_element(child, tag)
     return out
 
 
@@ -314,13 +308,13 @@ def _iter_top_drugs(fh):
 def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict | None:
     """One ``<drug>`` into the drug row, adding to the shared entity tables.
 
-    The four CETT subtrees collapse into one ``binds`` list because ``kind`` is a
+    The four _BIOMOL_TERM subtrees collapse into one ``binds`` list because ``kind`` is a
     property of the edge, not of the bio-entity: 286 of 3,266 BE ids are a target
     for one drug and an enzyme or carrier for another. The entity half is hoisted
     verbatim -- 0 of 3,266 BE ids differ between occurrences -- which removes the
     6.9x polypeptide and 11.3x GO-classifier repetition.
     """
-    drug = _obj(elem)
+    drug = _xml_element(elem)
     ids = drug.get("drugbank-id") or []
     primary = next(
         (i["$"] for i in ids if i.get("@primary") == "true"),
@@ -331,7 +325,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict | None:
     drug["drugbank_id"] = primary
 
     binds = []
-    for container in _CETT:
+    for container in _BIOMOL_TERMS:
         for entry in drug.pop(container, []):
             be_id = entry.get("id")
             biomolecules.setdefault(
@@ -347,7 +341,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict | None:
                 {
                     "be_id": be_id,
                     "kind": container[:-1],
-                    **{f: entry.get(f) for f in _EDGE},
+                    **{f: entry.get(f) for f in _DRUG_BIOMOL_ATTR},
                 }
             )
     drug["binds"] = binds
