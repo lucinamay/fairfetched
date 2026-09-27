@@ -31,6 +31,7 @@ import logging as lg
 import shutil
 import xml.etree.ElementTree as ET
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import polars as pl
@@ -52,7 +53,6 @@ _DRIFT_MSG = (
 # Everywhere else the parser strips the namespace off the tag rather than map it.
 _DRUG_TAG = "{http://www.drugbank.ca}drug"
 
-# # @TODO: fill
 DRUGBANK_VERSIONS: tuple[str, ...] = ("5.1.10", "5.1.11", "5.1.12", "5.1.13")
 
 # licence required; not auto-fetchable
@@ -74,16 +74,21 @@ def source_urls(version: str) -> dict[str, str]:
 # -- register (bring your own licensed file) -------------------------------
 
 
+@contextmanager
 def _uncompressed_stream(path: Path):
     """Binary stream of the XML, whether given the release ``.zip``, a ``.gz`` or
     a plain ``.xml``."""
     if path.suffix == ".zip":
-        z = zipfile.ZipFile(path)
-        inner = next(n for n in z.namelist() if n.endswith(".xml"))
-        return z.open(inner)
-    if path.suffix == ".gz":
-        return gzip.open(path, "rb")
-    return open(path, "rb")
+        with zipfile.ZipFile(path) as z:
+            inner = next(n for n in z.namelist() if n.endswith(".xml"))
+            with z.open(inner) as src:
+                yield src
+    elif path.suffix == ".gz":
+        with gzip.open(path, "rb") as src:
+            yield src
+    else:
+        with open(path, "rb") as src:
+            yield src
 
 
 def version_of(xml_path: Path | str) -> str:
@@ -137,16 +142,15 @@ def ensure_raw_files(
     if xml_path is not None:
         return register(xml_path, version, raw_dir, force=force)
     raw_dir = Path(raw_dir or DRUGBANK_DIR / version / "raw")
-    gz = raw_dir / "full_database.xml.gz"
-    if gz.exists():
-        paths = {"full_database": gz}
-        manifest.verify(paths, raw_dir / _MANIFEST_NAME, _DRIFT_MSG)
-        return paths
-    raise FileNotFoundError(
-        f"DrugBank {version} is not registered. Download the release from "
-        f"{_RELEASES_URL} under your licence and register it with "
-        f"Drugbank.from_xml(path, version='{version}')."
-    )
+    paths = {"full_database": raw_dir / "full_database.xml.gz"}
+    if not paths["full_database"].exists():
+        raise FileNotFoundError(
+            f"DrugBank {version} is not registered. Download the release from "
+            f"{_RELEASES_URL} under your licence and register it with "
+            f"Drugbank.from_xml(path, version='{version}')."
+        )
+    manifest.verify(paths, raw_dir / _MANIFEST_NAME, _DRIFT_MSG)
+    return paths
 
 
 # -- parse XML -> Parquet -------------------------------------------------
@@ -208,9 +212,9 @@ _PARENT_CHILD_PAIRS = frozenset(
     }
 )
 
-# (parent, leaf) pairs whose text carries attributes, rendered {"@attr":…, "$": text}.
-# @primary is present on a drug's primary <drugbank-id> and absent on second
-# undeclared attributed raises
+# (parent, leaf) pairs whose text carries attributes, rendered {"@attr":…, "$": text};
+# an attribute on any other leaf raises. @primary is present on a drug's primary
+# <drugbank-id> and absent on its secondary ones.
 _ATTR_LEAF = frozenset(
     {
         ("drug", "drugbank-id"),
@@ -280,7 +284,7 @@ def _xml_element(elem, parent: str = ""):
             out.setdefault(ct, []).append(_xml_element(child, tag))
         elif ct in out:
             raise ValueError(
-                f"<{tag}> repeats <{ct}>; add ('{tag}', '{ct}') to _MULTI, "
+                f"<{tag}> repeats <{ct}>; add ('{tag}', '{ct}') to _PARENT_CHILD_PAIRS, "
                 f"or '{tag}' to _BOX if it is a container"
             )
         else:
@@ -305,7 +309,7 @@ def _iter_top_drugs(fh):
             root.clear()  # drop processed siblings; saves memory
 
 
-def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict | None:
+def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
     """One ``<drug>`` into the drug row, adding to the shared entity tables.
 
     The four _BIOMOL_TERM subtrees collapse into one ``binds`` list because ``kind`` is a
@@ -315,13 +319,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict | None:
     6.9x polypeptide and 11.3x GO-classifier repetition.
     """
     drug = _xml_element(elem)
-    ids = drug.get("drugbank-id") or []
-    primary = next(
-        (i["$"] for i in ids if i.get("@primary") == "true"),
-        ids[0]["$"] if ids else None,
-    )
-    if primary is None:
-        return None
+    primary = next(i["$"] for i in drug["drugbank-id"] if i.get("@primary") == "true")
     drug["drugbank_id"] = primary
 
     binds = []
@@ -418,9 +416,7 @@ def ensure_parquet_tables(
     i = 0
     with gzip.open(gz, "rb") as fh:
         for i, elem in enumerate(_iter_top_drugs(fh), 1):
-            row = _split(elem, biomolecules, pathways, ddi)
-            if row is not None:
-                drugs.append(row)
+            drugs.append(_split(elem, biomolecules, pathways, ddi))
             if i % _CHUNK == 0:
                 flush()
                 _lg.info("parsed %d drugs", i)
@@ -448,7 +444,9 @@ def ensure_parquet_tables(
 
 
 def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
-    """Null empty strings. Applied on scan, never written to Parquet."""
+    """Null empty strings in top-level String columns; nested fields keep ``""``.
+    Leaf text is already ``None`` when empty, so this reaches attribute columns
+    such as ``@type``. Applied on scan, never written to Parquet."""
     return lf.with_columns(pl.col(pl.String).replace({"": None}))
 
 

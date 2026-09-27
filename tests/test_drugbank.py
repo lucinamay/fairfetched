@@ -17,7 +17,7 @@ from fairfetched.get import drugbank
 # Two top-level drugs. Drug 2 carries a <pathways> block with a *nested* <drug>
 # that must not be counted as a third drug, shares bio-entity BE9000001 with drug 1
 # under a different kind, and binds BE9000009 "DNA", which has no <polypeptide>.
-# Drug 3 binds nothing at all and joins no pathway.
+# Drug 3 binds nothing at all, joins no pathway, and has an empty type="".
 _XML = """<?xml version="1.0" encoding="UTF-8"?>
 <drugbank xmlns="http://www.drugbank.ca" version="5.1" exported-on="2025-01-01">
   <drug type="biotech">
@@ -169,7 +169,7 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
       </pathway>
     </pathways>
   </drug>
-  <drug type="small molecule">
+  <drug type="">
     <drugbank-id primary="true">DB90003</drugbank-id>
     <name>Nullaxin</name>
     <groups><group>experimental</group></groups>
@@ -443,9 +443,8 @@ class TestViews:
         }
 
     def test_empty_string_nulled_on_scan(self, parquet_paths):
-        # drug 2 has no <description> element at all
+        # drug 3 has type="": stored as "", nulled on scan
+        raw = _drug(parquet_paths, "DB90003")
+        assert raw["@type"] == ""
         drugs = drugbank.cleanly_scan_parquet(parquet_paths["drug"]).collect()
-        assert (
-            drugs.filter(drugbank_id="DB90002").row(0, named=True)["description"]
-            is None
-        )
+        assert drugs.filter(drugbank_id="DB90003").row(0, named=True)["@type"] is None
