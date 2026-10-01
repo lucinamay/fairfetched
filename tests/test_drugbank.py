@@ -354,6 +354,33 @@ class TestParse:
         again = drugbank.ensure_parquet_tables(raw_paths, tmp_path / "pq")
         assert {t: p.stat().st_mtime_ns for t, p in again.items()} == mtimes
 
+    @pytest.mark.parametrize("left_in", ["drug_drug", "_partial/drug_drug"])
+    def test_reparse_drops_stale_parts(self, tmp_path, raw_paths, left_in):
+        stale = tmp_path / "pq" / left_in / "part-9999.parquet"
+        stale.parent.mkdir(parents=True)
+        pl.DataFrame({"drugbank_id": ["DBSTALE"]}).write_parquet(stale)
+        paths = drugbank.ensure_parquet_tables(raw_paths, tmp_path / "pq")
+        assert "DBSTALE" not in pl.read_parquet(paths["drug_drug"])["drugbank_id"]
+        assert not (tmp_path / "pq" / "_partial").exists()
+
+    def test_failed_parse_leaves_no_tables(self, tmp_path):
+        bad = tmp_path / "bad.xml"
+        bad.write_text(_XML.replace("<unii>FAKE123</unii>", "<unii>a</unii><unii>b</unii>"))
+        raw = drugbank.register(bad, version="5.1.13", raw_dir=tmp_path / "raw")
+        with pytest.raises(ValueError, match="repeats <unii>") as err:
+            drugbank.ensure_parquet_tables(raw, tmp_path / "pq")
+        assert "in drug DB90001" in err.value.__notes__
+        assert not (tmp_path / "pq" / "drug.parquet").exists()
+
+    def test_conflicting_biomolecule_raises(self, tmp_path):
+        # drug 2's copy of BE9000001 renamed, so the two occurrences disagree
+        bad = tmp_path / "bad.xml"
+        i = _XML.index("<enzymes>", _XML.index("DB90002"))
+        bad.write_text(_XML[:i] + _XML[i:].replace("Fake receptor", "Other", 1))
+        raw = drugbank.register(bad, version="5.1.13", raw_dir=tmp_path / "raw")
+        with pytest.raises(ValueError, match="BE9000001 under DB90002 differs"):
+            drugbank.ensure_parquet_tables(raw, tmp_path / "pq")
+
 
 class TestDeclaredShape:
     """The three declared sets exist so a schema change in a new DrugBank release

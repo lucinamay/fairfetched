@@ -51,7 +51,8 @@ _DRIFT_MSG = (
 # ponytail: one namespace constant, DrugBank has used it since 4.x. A release
 # that changes it parses to zero drugs and ``ensure_parquet_tables`` raises.
 # Everywhere else the parser strips the namespace off the tag rather than map it.
-_DRUG_TAG = "{http://www.drugbank.ca}drug"
+_NS = "{http://www.drugbank.ca}"
+_DRUG_TAG = _NS + "drug"
 
 DRUGBANK_VERSIONS: tuple[str, ...] = ("5.1.10", "5.1.11", "5.1.12", "5.1.13")
 
@@ -309,6 +310,13 @@ def _iter_top_drugs(fh):
             root.clear()  # drop processed siblings; saves memory
 
 
+def _set_default_safe(table: dict, key: str, row: dict, drugbank_id: str) -> None:
+    if table.setdefault(key, row) != row:
+        raise ValueError(
+            f"{key} under {drugbank_id} differs from its earlier occurrence"
+        )
+
+
 def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
     """One ``<drug>`` into the drug row, adding to the shared entity tables.
 
@@ -318,7 +326,12 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
     verbatim -- 0 of 3,266 BE ids differ between occurrences -- which removes the
     6.9x polypeptide and 11.3x GO-classifier repetition.
     """
-    drug = _xml_element(elem)
+    try:
+        drug = _xml_element(elem)
+    except ValueError as e:
+        primary = elem.findtext(_NS + "drugbank-id[@primary='true']")
+        e.add_note(f"in drug {primary}")
+        raise
     primary = next(i["$"] for i in drug["drugbank-id"] if i.get("@primary") == "true")
     drug["drugbank_id"] = primary
 
@@ -326,7 +339,8 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
     for container in _BIOMOL_TERMS:
         for entry in drug.pop(container, []):
             be_id = entry.get("id")
-            biomolecules.setdefault(
+            _set_default_safe(
+                biomolecules,
                 be_id,
                 {
                     "be_id": be_id,
@@ -334,6 +348,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
                     "organism": entry.get("organism"),
                     "polypeptide": entry.get("polypeptide"),
                 },
+                primary,
             )
             binds.append(
                 {
@@ -347,7 +362,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
     pathway_ids = []
     for pathway in drug.pop("pathways", []):
         smpdb_id = pathway.get("smpdb-id")
-        pathways.setdefault(smpdb_id, pathway)
+        _set_default_safe(pathways, smpdb_id, pathway, primary)
         pathway_ids.append(smpdb_id)
     drug["pathway_ids"] = pathway_ids
 
@@ -385,11 +400,16 @@ def ensure_parquet_tables(
     if all(d.exists() for d in dests.values()):
         return dests
 
+    # written here, moved into place only once all four are complete
+    staging = table_dir / "_partial"
+    shutil.rmtree(staging, ignore_errors=True)  # parts left by an interrupted run
+    staged = {t: staging / d.name for t, d in dests.items()}
+    staged["drug_drug"].mkdir(parents=True)
+
     drugs: list[dict] = []
     biomolecules: dict[str, dict] = {}
     pathways: dict[str, dict] = {}
     ddi: list[dict] = []
-    dests["drug_drug"].mkdir(exist_ok=True)
     frame: pl.DataFrame | None = None
     parts = 0
 
@@ -408,7 +428,7 @@ def ensure_parquet_tables(
             )
             drugs.clear()
         pl.DataFrame(ddi, schema=_DDI_SCHEMA).write_parquet(
-            dests["drug_drug"] / f"part-{parts:04d}.parquet", compression="zstd"
+            staged["drug_drug"] / f"part-{parts:04d}.parquet", compression="zstd"
         )
         ddi.clear()
         parts += 1
@@ -429,14 +449,21 @@ def ensure_parquet_tables(
         f"parsed {i} drugs, {len(biomolecules)} bio-entities, {len(pathways)} pathways"
     )
 
-    frame.write_parquet(dests["drug"], compression="zstd")
+    frame.write_parquet(staged["drug"], compression="zstd")
     for name, rows in (
         ("biomolecule", list(biomolecules.values())),
         ("pathway", list(pathways.values())),
     ):
         pl.DataFrame(rows, infer_schema_length=None, strict=False).write_parquet(
-            dests[name], compression="zstd"
+            staged[name], compression="zstd"
         )
+
+    # drug.parquet last: until it lands, the all-exist check above re-parses
+    dests["drug"].unlink(missing_ok=True)
+    shutil.rmtree(dests["drug_drug"], ignore_errors=True)
+    for t in ("drug_drug", "biomolecule", "pathway", "drug"):
+        staged[t].replace(dests[t])
+    staging.rmdir()
     return dests
 
 
