@@ -90,6 +90,9 @@ standardise = [
     { name = "papyrus-structure-pipeline" },
     { name = "rdkit" },
 ]
+toxcast = [
+    { name = "fastexcel" },
+]
 track = [
     { name = "rich" },
 ]
@@ -112,7 +115,9 @@ requires-dist = [
     { name = "fairfetched", extras = ["adrecs"], marker = "extra == 'dev'", virtual = "." },
     { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", virtual = "." },
     { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'", virtual = "." },
+    { name = "fairfetched", extras = ["toxcast"], marker = "extra == 'dev'", virtual = "." },
     { name = "fastexcel", marker = "extra == 'adrecs'", specifier = ">=0.12" },
+    { name = "fastexcel", marker = "extra == 'toxcast'", specifier = ">=0.12" },
     { name = "papyrus-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=0.0.5" },
     { name = "polars", specifier = ">=1.35.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
@@ -121,7 +126,7 @@ requires-dist = [
     { name = "rust-just", marker = "extra == 'dev'", specifier = ">=1.46.0" },
     { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0.46" },
 ]
-provides-extras = ["track", "adrecs", "rdkit", "standardise", "dev"]
+provides-extras = ["track", "adrecs", "toxcast", "rdkit", "standardise", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

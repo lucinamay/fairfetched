@@ -12,6 +12,7 @@ dependencies = [
 [project.optional-dependencies]
 track = ["rich>=14.3.3"]
 adrecs = ["fastexcel>=0.12"] # ADReCS / ADReCS-Target's .xlsx;
+toxcast = ["fastexcel>=0.12"] # ToxCast's metadata .xlsx
 rdkit = [
     "rdkit>=2025.9.6",
 ]
@@ -20,11 +21,14 @@ standardise = [
     "chembl-structure-pipeline>=1.2.4",
     "papyrus-structure-pipeline>=0.0.5",
 ]
+split = ["nanoom>=0.1.0a20260815"] # fold assignment in standardize.split_expr
 dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",
+    "fairfetched[split]",
     "fairfetched[standardise]",
     "fairfetched[adrecs]",
+    "fairfetched[toxcast]",
     "rust-just>=1.46.0",
 ]
 

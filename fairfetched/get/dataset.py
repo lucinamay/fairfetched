@@ -12,6 +12,7 @@ from fairfetched.get import (
     drugbank,
     papyrus,
     sider,
+    toxcast,
 )
 from fairfetched.get._chembl_tables import ChemblTables
 from fairfetched.get._papyrus_tables import PapyrusTables
@@ -103,6 +104,16 @@ class _SiderView(_View):
     @property
     def frequencies(self) -> LazyFrame:
         return self._views["frequencies"]
+
+
+class _ToxcastView(_View):
+    @property
+    def targets(self) -> LazyFrame:
+        return self._views["targets"]
+
+    @property
+    def assay_annotations(self) -> LazyFrame:
+        return self._views["assay_annotations"]
 
 
 class _DrugbankView(_View):
@@ -516,6 +527,63 @@ class Sider(_Base):
         cls, root_dir: Path | str = f"{BASE_DIR}/sider", force: bool = False
     ) -> "Sider":
         return cls.from_version(sider.latest(), root_dir=root_dir, force=force)
+
+
+@dataclass(frozen=True, repr=False)
+class Toxcast(_Base):
+    """ToxCast (EPA invitrodb) wrapper: download once, then read lazily.
+
+    The 7.5 GB summary zip is fetched whole; only its ``mc5-6`` table is kept
+    (as Parquet). Clowder file ids are not content pins, so the release is
+    pinned by hash (``fairfetched.get.toxcast._toxcast_manifest.json``).
+    ``view`` holds ``compounds``, ``bioactivity``, ``targets``,
+    ``assay_annotations``::
+
+        db = Toxcast.from_latest()
+        db.view.bioactivity.sink_parquet("toxcast_bioactivity.parquet")
+    """
+
+    module: DatasetGetModule = toxcast
+
+    @staticmethod
+    def get_available_versions():
+        return toxcast.available_versions()
+
+    @cached_property
+    def view(self) -> _ToxcastView:
+        return _ToxcastView(self)
+
+    @cached_property
+    def tables(self) -> dict[str, LazyFrame]:
+        return self.lfs
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str = "4.3",
+        root_dir: Path | str = f"{BASE_DIR}/toxcast",
+        force: bool = False,
+    ) -> "Toxcast":
+        dir = Path(root_dir) / str(version)
+        raw_paths = toxcast.ensure_raw_files(
+            str(version), raw_dir=dir / "raw", force=force
+        )
+        parquet_paths = toxcast.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/toxcast", force: bool = False
+    ) -> "Toxcast":
+        return cls.from_version(toxcast.latest(), root_dir=root_dir, force=force)
 
 
 @dataclass(frozen=True, repr=False)
