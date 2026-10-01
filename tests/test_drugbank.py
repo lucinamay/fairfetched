@@ -473,5 +473,5 @@ class TestViews:
         # drug 3 has type="": stored as "", nulled on scan
         raw = _drug(parquet_paths, "DB90003")
         assert raw["@type"] == ""
-        drugs = drugbank.cleanly_scan_parquet(parquet_paths["drug"]).collect()
+        drugs = drugbank.cleanly_scan_parquet_tables(parquet_paths)["drug"].collect()
         assert drugs.filter(drugbank_id="DB90003").row(0, named=True)["@type"] is None

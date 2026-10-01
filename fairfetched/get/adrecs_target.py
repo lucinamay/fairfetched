@@ -18,13 +18,14 @@ dependencies before running.
 """
 
 import logging as lg
+from functools import partial
 from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url
+from fairfetched.utils import BASE_DIR, ensure_url, tables
 
-from .adrecs import cleanly_scan_parquet
+from . import adrecs
 
 _lg = lg.getLogger(__name__)
 
@@ -85,40 +86,21 @@ def ensure_raw_files(
     }
 
 
-def _read_raw(name: str, path: Path) -> pl.DataFrame:
-    if name == "adr_all_associations":
-        return pl.read_csv(
-            path, separator="#", has_header=False, new_columns=_THREELEVER_COLUMNS
-        )
-    if path.name.lower().endswith(".xlsx"):
-        return pl.read_excel(path)  # ponytail: first sheet; ALLTOXI_INFO's extra sheets are dropped
-    return pl.read_csv(path, separator="\t", infer_schema_length=10000)
-
-
 def ensure_parquet_tables(
     raw_paths: dict[str, Path], table_dir: Path | str | None = None
 ) -> dict[str, Path]:
-    if table_dir is None:
-        table_dir = next(iter(raw_paths.values())).parent.parent / "parquet"
-    table_dir = Path(table_dir)
-    table_dir.mkdir(exist_ok=True, parents=True)
-
-    out: dict[str, Path] = {}
-    for name, path_ in raw_paths.items():
-        dest = table_dir / f"{name}.parquet"
-        out[name] = dest
-        if dest.exists():
-            continue
-        _lg.info(f"parsing {path_} -> {dest}")
-        _read_raw(name, Path(path_)).write_parquet(dest)
-    return out
+    """ponytail: xlsx first sheet only; ALLTOXI_INFO's extra sheets are dropped."""
+    scan_kwargs = {
+        "adr_all_associations": {
+            "separator": "#",
+            "has_header": False,
+            "new_columns": _THREELEVER_COLUMNS,
+        }
+    }
+    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    """Scan raw Parquet paths and apply :func:`~fairfetched.get.adrecs._clean` lazily."""
-    return {name: cleanly_scan_parquet(p) for name, p in parquet_paths.items()}
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=adrecs._clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

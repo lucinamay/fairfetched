@@ -16,11 +16,12 @@ ADReCS itself does not state any license.
 
 import logging as lg
 import re
+from functools import partial
 from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url
+from fairfetched.utils import BASE_DIR, ensure_url, tables
 
 _lg = lg.getLogger(__name__)
 
@@ -101,47 +102,9 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.with_columns(pl.col(pl.String).replace(_NULL_TOKENS))
 
 
-def _read_raw(path: Path) -> pl.DataFrame:
-    """excel -> first sheet; ``.txt``/``.txt.gz`` -> tab-separated (polars
-    auto-decompresses gzip)."""
-    name = path.name.lower()
-    if name.endswith(".xlsx"):
-        return pl.read_excel(
-            path
-        )  # ponytail: first sheet only; ADReCS core files are single-sheet
-    return pl.read_csv(path, separator="\t", infer_schema_length=10000)
-
-
-def ensure_parquet_tables(
-    raw_paths: dict[str, Path], table_dir: Path | str | None = None
-) -> dict[str, Path]:
-    """Consolidate each raw file into a Parquet table, untouched: original
-    columns, original values. Cleaning happens later, on scan."""
-    if table_dir is None:
-        table_dir = next(iter(raw_paths.values())).parent.parent / "parquet"
-    table_dir = Path(table_dir)
-    table_dir.mkdir(exist_ok=True, parents=True)
-
-    out: dict[str, Path] = {}
-    for name, path_ in raw_paths.items():
-        dest = table_dir / f"{name}.parquet"
-        out[name] = dest
-        if dest.exists():
-            continue
-        _lg.info(f"parsing {path_} -> {dest}")
-        _read_raw(Path(path_)).write_parquet(dest)
-    return out
-
-
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    """Scan a raw Parquet and apply :func:`_clean` lazily."""
-    return _clean(pl.scan_parquet(path_))
-
-
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    return {name: cleanly_scan_parquet(p) for name, p in parquet_paths.items()}
+# the names ``dataset.Adrecs`` expects of a source module
+ensure_parquet_tables = tables.ensure_parquet_tables  # xlsx: first sheet only; ADReCS core files are single-sheet
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

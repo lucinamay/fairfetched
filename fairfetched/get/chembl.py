@@ -1,5 +1,6 @@
 import logging as lg
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from fairfetched.utils import (
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
+    tables,
 )
 from fairfetched.utils.typing import BioactivityDBViews
 
@@ -93,23 +95,16 @@ def ensure_parquet_tables(
     return parquets
 
 
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    """scans parquet paths and lazily handles null value conversion to None"""
+def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Lowercase columns; NaN and empty strings become null. Applied on scan."""
     return (
-        pl.scan_parquet(path_)
-        .pipe(lowercase_columns)
+        lf.pipe(lowercase_columns)
         .fill_nan(None)
-        .with_columns(
-            pl.col(pl.String).replace({"": None}),
-        )
+        .with_columns(pl.col(pl.String).replace({"": None}))
     )
 
 
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    """scans parquet paths and lazily handles null value conversion to None"""
-    return {name: cleanly_scan_parquet(path_) for name, path_ in parquet_paths.items()}
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 # should be present v20+ @TODO: devise better system for pre-v20 if needed

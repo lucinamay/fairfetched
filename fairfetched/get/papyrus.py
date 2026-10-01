@@ -4,6 +4,7 @@ This module provides functions to ensure the presence of raw and cleaned Papyrus
 and defines the Papyrus_57 database configuration.
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +12,12 @@ import polars as pl
 
 from fairfetched.utils import (
     BASE_DIR,
-    decompress_and_scan_tsvxz,
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
+    tables,
 )
+from fairfetched.utils.tables import scan_raw
 from fairfetched.utils.typing import BioactivityDBViews
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
@@ -60,66 +62,37 @@ def ensure_raw_files(
     }
 
 
-def ensure_parquet_tables(
-    raw_paths: dict[str, Path],
-    table_dir: Path | str | None = None,
-) -> dict[str, Path]:
-    """Downloads if missing, extracts to streamable parquets for lazy loading,
-    returns paths to raw files and parquet files. Ignores README.txt file
-
-    parquet_dir default is raw_filepath_dir.parent / "parquet"
-
-    """
-    if table_dir is None:
-        table_dir = next(iter(raw_paths.values())).parent.parent / "parquet"
-    table_dir = Path(table_dir)
-    table_dir.mkdir(exist_ok=True, parents=True)
-    schema_overrides = {
-        "Year": pl.Int32,
-        "pchembl_value_Mean": pl.Float64,
-        "pchembl_value_StdDev": pl.Float64,
-        "pchembl_value_SEM": pl.Float64,
-        # because of stray floats in pchembl_value_N, we do float -> int
-        "pchembl_value_N": pl.Float64,
-        "pchembl_value_Median": pl.Float64,
-        "pchembl_value_MAD": pl.Float64,
-    }
-
-    filepath_dict = {}
-    for name, path_ in raw_paths.items():
-        if path_.name.lower() == "readme.txt":
-            continue
-        new_path = table_dir / f"{path_.stem.split('.')[0]}.parquet"
-        filepath_dict[name] = new_path
-        if new_path.exists():
-            continue
-        decompress_and_scan_tsvxz(
-            path_,
-            separator="\t",
-            infer_schema=False,
-            schema_overrides=schema_overrides,
-            null_values=["NA", ""],  # which values to take as None
-        ).cast(
-            {"pchembl_value_N": pl.Int64} if name == "bioactivity" else {}
-        ).sink_parquet(new_path)
-    return filepath_dict
+def _scan_raw(name: str, path: Path) -> pl.LazyFrame:
+    lf = scan_raw(
+        path,
+        infer_schema=False,
+        schema_overrides={
+            "Year": pl.Int32,
+            "pchembl_value_Mean": pl.Float64,
+            "pchembl_value_StdDev": pl.Float64,
+            "pchembl_value_SEM": pl.Float64,
+            # because of stray floats in pchembl_value_N, we do float -> int
+            "pchembl_value_N": pl.Float64,
+            "pchembl_value_Median": pl.Float64,
+            "pchembl_value_MAD": pl.Float64,
+        },
+        null_values=["NA", ""],
+    )
+    if name == "bioactivity":
+        lf = lf.cast({"pchembl_value_N": pl.Int64})
+    return lf
 
 
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    """Scan table Parquet files and apply dataset-specific column cleanup."""
+# the table_dir default and README skip live in tables.ensure_parquet_tables
+ensure_parquet_tables = partial(tables.ensure_parquet_tables, scanner=_scan_raw)
 
-    return {
-        "protein": (
-            pl.scan_parquet(parquet_paths["protein"])
-            .pipe(lowercase_columns)
-            .rename({"uniprotid": "uniprot_id"})
-        ),
-        "bioactivity": (
-            pl.scan_parquet(parquet_paths["bioactivity"]).pipe(lowercase_columns)
-        ),
-    }
+
+def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Lowercase columns & protein table's ``uniprotid`` => ``uniprot_id``"""
+    return lf.pipe(lowercase_columns).rename({"uniprotid": "uniprot_id"}, strict=False)
+
+
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:

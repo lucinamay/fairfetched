@@ -16,11 +16,12 @@ Prefer the ``dataset.Sider`` wrapper; standalone use::
 """
 
 import logging as lg
+from functools import partial
 from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url, manifest
+from fairfetched.utils import BASE_DIR, ensure_url, manifest, tables
 
 _lg = lg.getLogger(__name__)
 
@@ -111,41 +112,22 @@ def ensure_raw_files(
     return raw_paths
 
 
-def _read_raw(name: str, path: Path) -> pl.DataFrame:
-    """Headerless TSV (polars auto-decompresses gzip) with the README columns."""
-    return pl.read_csv(
-        path,
-        separator="\t",
-        has_header=False,
-        new_columns=_COLUMNS[name],
-        # SIDER's term names carry unescaped double quotes ('"Ventilation"
-        # pneumonitis'), so quote parsing has to be off.
-        quote_char=None,
-        infer_schema_length=10000,
-    )
-
-
 def ensure_parquet_tables(
     raw_paths: dict[str, Path], table_dir: Path | str | None = None
 ) -> dict[str, Path]:
     """Consolidate each raw file into a Parquet table, untouched: README columns,
-    original values. Cleaning happens later, on scan. README is skipped."""
-    if table_dir is None:
-        table_dir = next(iter(raw_paths.values())).parent.parent / "parquet"
-    table_dir = Path(table_dir)
-    table_dir.mkdir(exist_ok=True, parents=True)
-
-    out: dict[str, Path] = {}
-    for name, path_ in raw_paths.items():
-        if name == "readme":
-            continue
-        dest = table_dir / f"{name}.parquet"
-        out[name] = dest
-        if dest.exists():
-            continue
-        _lg.info(f"parsing {path_} -> {dest}")
-        _read_raw(name, Path(path_)).write_parquet(dest)
-    return out
+    original values. Cleaning happens later, on scan."""
+    scan_kwargs = {
+        name: {
+            "has_header": False,
+            "new_columns": cols,
+            # SIDER's term names carry unescaped double quotes ('"Ventilation"
+            # pneumonitis'), so quote parsing has to be off.
+            "quote_char": None,
+        }
+        for name, cols in _COLUMNS.items()
+    }
+    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
 def stitch_id_to_cid(stitch_id: pl.Expr) -> pl.Expr:
@@ -167,14 +149,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf
 
 
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    return _clean(pl.scan_parquet(path_))
-
-
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    return {name: cleanly_scan_parquet(p) for name, p in parquet_paths.items()}
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
