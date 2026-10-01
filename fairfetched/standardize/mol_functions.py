@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, fields
 from functools import lru_cache, wraps
@@ -18,6 +19,7 @@ from rdkit.Chem import (
     MolToInchiAndAuxInfo,
     RemoveStereochemistry,
 )
+from rdkit.Chem.Scaffolds import MurckoScaffold
 from rdkit.Chem.rdFingerprintGenerator import FingerprintGenerator64, GetMorganGenerator
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 
@@ -212,3 +214,19 @@ def _num_atoms(b: bytes | None) -> int | None:
 @safe_step
 def _num_heavy_atoms(b: bytes | None) -> int | None:
     return Mol(b).GetNumHeavyAtoms()  # ty: ignore[no-matching-overload]
+
+
+@safe_step
+def _binary_to_scaffold_smiles(b: bytes | None, generic: bool = False) -> str | None:
+    """Bemis–Murcko scaffold SMILES; `generic=True` also makes atoms/bonds generic."""
+    scaffold = MurckoScaffold.GetScaffoldForMol(Mol(b))  # ty: ignore[no-matching-overload]
+    if generic:
+        scaffold = MurckoScaffold.MakeScaffoldGeneric(scaffold)
+    return MolToSmiles(scaffold)
+
+
+def _stable_hash64(s: str | None) -> int | None:
+    """Process-, version- and platform-independent 64-bit hash (hashlib.blake2b, not `hash()`/`pl.Expr.hash`)."""
+    if s is None:
+        return None
+    return int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "big")
