@@ -214,12 +214,12 @@ class Chembl(_Base):
     >>> from fairfetched.get import Chembl
     >>> db = Chembl.demo()
     >>> db.view.compounds.collect().shape                    # joined domain views
-    (3, 20)
+    (5, 50)
     >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
-    >>> db.tables.molecule_dictionary.collect()["pref_name"].to_list()
-    ['Aspirin', 'Ibuprofen', 'Ibuprofen sodium']
-    >>> db.tables.molecule_dictionary.collect_schema().names()  # column names, no scan
-    ['molregno', 'chembl_id', 'pref_name', 'max_phase', 'molecule_type', 'withdrawn_flag', 'chirality']
+    >>> db.tables.molecule_dictionary.filter(molregno=1280).collect()["pref_name"].to_list()
+    ['ASPIRIN']
+    >>> db.tables.molecule_dictionary.collect_schema().names()[:4]  # column names, no scan
+    ['molregno', 'pref_name', 'chembl_id', 'max_phase']
     >>> len(db.lfs)                                          # every raw table
     26
     """
@@ -240,11 +240,11 @@ class Chembl(_Base):
 
     @classmethod
     def demo(cls) -> "Chembl":
-        """Tiny offline sample (3 molecules, 3 activities, 2 targets). See fairfetched.get._demo."""
+        """Tiny offline slice of ChEMBL 37 (5 molecules, 10 activities). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
-            parquet_paths=_demo.chembl_parquets(),
+            parquet_paths=_demo.parquets("chembl"),
             dir=_demo.DEMO_DIR / "chembl",
             module=cls.module,
         )
@@ -299,13 +299,13 @@ class Papyrus(_Base):
     >>> from fairfetched.get import Papyrus
     >>> db = Papyrus.demo()
     >>> db.view.full.collect().shape            # bioactivity + protein, one flat frame
-    (3, 9)
-    >>> db.view.proteins.collect()["pref_name"].to_list()
-    ['Kinase 1', 'Kinase 2']
+    (10, 38)
+    >>> db.view.proteins.collect()["uniprot_id"].to_list()
+    ['KYNU_HUMAN', 'ST2A1_RAT']
     >>> db.tables.bioactivity.collect().height  # raw source tables
-    3
-    >>> db.tables.protein.collect_schema().names()  # column names, no scan
-    ['target_id', 'uniprot_id', 'target_chembl_id', 'pref_name']
+    10
+    >>> db.tables.protein.collect_schema().names()[:3]  # column names, no scan
+    ['target_id', 'uniprot_id', 'status']
     """
 
     module: DatasetGetModule = papyrus
@@ -324,11 +324,11 @@ class Papyrus(_Base):
 
     @classmethod
     def demo(cls) -> "Papyrus":
-        """Tiny offline sample (3 activities, 2 proteins). See fairfetched.get._demo."""
+        """Tiny offline slice of Papyrus 05.7 (10 activities, 2 proteins). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
-            parquet_paths=_demo.papyrus_parquets(),
+            parquet_paths=_demo.parquets("papyrus"),
             dir=_demo.DEMO_DIR / "papyrus",
             module=cls.module,
         )
@@ -541,6 +541,19 @@ class Toxcast(_Base):
 
         db = Toxcast.from_latest()
         db.view.bioactivity.sink_parquet("toxcast_bioactivity.parquet")
+
+    ``Toxcast.demo()`` returns a tiny offline sample with the same API:
+
+    >>> from fairfetched.get import Toxcast
+    >>> db = Toxcast.demo()
+    >>> db.view.compounds.collect()["chnm"].to_list()
+    ['Acetamide', 'Acetaminophen', 'Acifluorfen']
+    >>> db.view.bioactivity.collect().shape     # rows without a chemical are dropped
+    (4, 76)
+    >>> sorted(db.view.bioactivity.collect()["aenm"].unique())
+    ['ACEA_ER_80hr', 'APR_HepG2_CellCycleArrest_1hr']
+    >>> db.view.targets.collect().shape         # long format: one row per (aeid, target_type)
+    (4, 7)
     """
 
     module: DatasetGetModule = toxcast
@@ -556,6 +569,17 @@ class Toxcast(_Base):
     @cached_property
     def tables(self) -> dict[str, LazyFrame]:
         return self.lfs
+
+    @classmethod
+    def demo(cls) -> "Toxcast":
+        """Tiny offline slice of ToxCast 4.3 (3 chemicals, 2 endpoints). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.parquets("toxcast"),
+            dir=_demo.DEMO_DIR / "toxcast",
+            module=cls.module,
+        )
 
     @classmethod
     def from_version(

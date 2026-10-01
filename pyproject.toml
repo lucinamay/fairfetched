@@ -40,7 +40,7 @@ addopts = "-rxX"
 
 [tool.setuptools]
 package-dir = {"" = "."}
-package-data = {"fairfetched.get" = ["_*_manifest.json"]}
+package-data = {"fairfetched.get" = ["_*_manifest.json", "_demo/*/*.parquet"]}
 
 [tool.setuptools.packages.find]
 where = ["."]
