@@ -6,11 +6,16 @@ from typing import TYPE_CHECKING, Literal
 import polars as pl
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import numpy as np
 
 Metric = Literal["tanimoto", "cosine", "euclidean", "cityblock"]
 Multitask = Literal["mean_std", "rms_std"]
+Replicates = Literal["pooled", "mean"]
 _Y = "__y__"
+_N = "__n__"
+_VAR = "__var__"
 
 
 def roughness(
@@ -120,6 +125,77 @@ def _struct_to_rogi(
     return _rogi(d, y, rogi_xd, multitask, min_dt)
 
 
+def replicate_variance(
+    y: str | pl.Expr,
+    *,
+    X: Sequence[str],
+    aggregate: Replicates = "pooled",
+    normalize: bool = False,
+) -> pl.Expr:
+    """Variance of `y` among rows with identical `X` (pl.Float64 scalar).
+
+    y: Float column, one row per measurement.
+    X: columns that identify a point, e.g. ["fp", "prot_emb"] or id columns.
+        Rows are replicates when all of `X` is exactly equal (float arrays
+        included). Points with a single row carry no information and are
+        left out.
+    aggregate: how the per-point variances (ddof=1) combine.
+        "pooled" weighs each point by its replicate count - 1 (the residual
+        mean square of a one-way ANOVA on the points): the noise of one
+        measurement, for training on the unaggregated rows.
+        "mean" weighs each point equally, so 2 replicates count as much as
+        50. Recommended when replicates are aggregated to one value per point
+        before training (e.g. Papyrus), where each point is one sample.
+    normalize: divide by the variance of all of `y`, giving the fraction of
+        the `y` variance that is replicate noise, comparable across datasets.
+
+    Raises on nulls in `X` or `y`, and when no point has 2 or more rows.
+
+    Reduces to one value, so it is valid per group:
+
+    >>> df.group_by("target_id").agg(
+    ...     noise=replicate_variance("pchembl", X=["fp"], aggregate="mean")
+    ... )  # doctest: +SKIP
+    """
+    y = pl.col(y) if isinstance(y, str) else y
+    return pl.struct(y.alias(_Y), *X).map_batches(
+        partial(
+            _struct_to_replicate_variance,
+            X=list(X),
+            aggregate=aggregate,
+            normalize=normalize,
+        ),
+        return_dtype=pl.Float64,
+        returns_scalar=True,
+    )
+
+
+def _struct_to_replicate_variance(
+    s: pl.Series, X: list[str], aggregate: Replicates, normalize: bool
+) -> float:
+    """`map_batches` worker: struct{y, *X} -> validate -> variance per point -> combine."""
+    df = s.struct.unnest()
+    if n := df.select(pl.any_horizontal(pl.col(X).is_null()).sum()).item():
+        raise ValueError(f"{n} rows have a null in `X`")
+    if n := df.get_column(_Y).null_count():
+        raise ValueError(f"`y` contains {n} nulls")
+
+    points = (
+        df.group_by(X)
+        .agg(pl.len().alias(_N), pl.col(_Y).var().alias(_VAR))
+        .filter(pl.col(_N) > 1)
+    )
+    if points.is_empty():
+        raise ValueError("no two rows share the same `X`")
+
+    if aggregate == "pooled":
+        dof = pl.col(_N) - 1
+        out = points.select((dof * pl.col(_VAR)).sum() / dof.sum()).item()
+    else:
+        out = points.get_column(_VAR).mean()
+    return out / df.get_column(_Y).var() if normalize else out
+
+
 def _unit_distance(x: np.ndarray, metric: Metric) -> np.ndarray:
     """Condensed pairwise distance of the rows of `x`, scaled to [0, 1].
 
@@ -218,4 +294,4 @@ def _rogi(
     return float(dispersion[0] - trapezoid(dispersion, x))
 
 
-__all__ = ["roughness"]
+__all__ = ["replicate_variance", "roughness"]

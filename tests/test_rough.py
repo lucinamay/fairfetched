@@ -11,6 +11,7 @@ from fairfetched.standardize.rough_expr import (
     _dispersion,
     _rogi,
     _unit_distance,
+    replicate_variance,
     roughness,
 )
 
@@ -182,3 +183,84 @@ class TestRoughness:
     def test_raises_above_max_rows_and_suggests_sample(self, df):
         with pytest.raises(ValueError, match=r"df\.sample\(50"):
             df.select(roughness("y", X=X_COLS, max_rows=50))
+
+
+class TestReplicateVariance:
+    """Expected values computed by hand.
+
+    Points A (y = 1, 2, 4; variance 7/3), B (y = 5, 7; variance 2) and a
+    single-row C (y = 9); the variance of all six y is 136/15.
+    """
+
+    X = ("fp", "emb")
+
+    @pytest.fixture
+    def replicates(self) -> pl.DataFrame:
+        return pl.DataFrame(
+            {
+                "target": ["P1"] * 6,
+                "fp": pl.Series(
+                    [[1, 0]] * 3 + [[0, 1]] * 2 + [[1, 1]], dtype=pl.Array(pl.UInt8, 2)
+                ),
+                "emb": pl.Series(
+                    [[0.1, 0.2]] * 3 + [[0.3, 0.4]] * 2 + [[0.5, 0.6]],
+                    dtype=pl.Array(pl.Float64, 2),
+                ),
+                "y": [1.0, 2.0, 4.0, 5.0, 7.0, 9.0],
+            }
+        )
+
+    @pytest.mark.parametrize(
+        ("aggregate", "expected"),
+        [("pooled", (2 * 7 / 3 + 1 * 2) / 3), ("mean", (7 / 3 + 2) / 2)],
+    )
+    def test_aggregate(self, replicates, aggregate, expected):
+        out = replicates.select(
+            r=replicate_variance("y", X=self.X, aggregate=aggregate)
+        )
+        assert out.schema == {"r": pl.Float64}
+        assert out.item() == pytest.approx(expected)
+
+    def test_normalize_divides_by_total_variance(self, replicates):
+        out = replicates.select(replicate_variance("y", X=self.X, normalize=True))
+        assert out.item() == pytest.approx(25 / 102)
+
+    def test_points_differing_in_one_column_are_not_replicates(self, replicates):
+        # with fp constant, fp alone makes all six rows one point
+        same_fp = replicates.with_columns(fp=pl.col("fp").first())
+        out = same_fp.select(
+            both=replicate_variance("y", X=self.X),
+            fp=replicate_variance("y", X=["fp"]),
+        )
+        assert out.row(0) == pytest.approx((20 / 9, 136 / 15))
+
+    def test_valid_per_group(self, replicates):
+        # P2 is the same frame with y doubled -> variance x 4
+        both = pl.concat(
+            [
+                replicates,
+                replicates.with_columns(
+                    pl.lit("P2").alias("target"), y=pl.col("y") * 2
+                ),
+            ]
+        )
+        out = both.group_by("target").agg(r=replicate_variance("y", X=self.X))
+        assert dict(out.iter_rows()) == pytest.approx({"P1": 20 / 9, "P2": 80 / 9})
+
+    def test_raises_without_replicates(self, replicates):
+        with pytest.raises(ValueError, match="no two rows share the same `X`"):
+            replicates.unique(self.X).select(replicate_variance("y", X=self.X))
+
+    def test_raises_on_null_y(self, replicates):
+        nulled = replicates.with_columns(
+            pl.when(pl.int_range(pl.len()) > 0).then("y").alias("y")
+        )
+        with pytest.raises(ValueError, match="`y` contains 1 nulls"):
+            nulled.select(replicate_variance("y", X=self.X))
+
+    def test_raises_on_null_x(self, replicates):
+        nulled = replicates.with_columns(
+            pl.when(pl.int_range(pl.len()) > 0).then("fp").alias("fp")
+        )
+        with pytest.raises(ValueError, match="1 rows have a null in `X`"):
+            nulled.select(replicate_variance("y", X=self.X))
