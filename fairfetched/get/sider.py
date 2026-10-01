@@ -2,7 +2,7 @@
 label-extracted frequencies.
 
 SIDER's download URLs carry no version and always serve whatever is
-current, so there is nothing in the URL to pin a release. ``_sider_manifest.json``
+current, so there is nothing in the URL to pin a release. ``manifests/sider.json``
 is the pin instead (via :mod:`fairfetched.utils.manifest`): download raises if a
 file's sha256 no longer matches, which means upstream moved and every count
 derived from SIDER has to be rechecked. Regenerate it with
@@ -21,12 +21,12 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url, manifest, tables
+from fairfetched.utils import BASE_DIR, ensure_url, manifest, raw
 
 _lg = lg.getLogger(__name__)
 
 SIDER_DIR = BASE_DIR / "sider"
-_MANIFEST_PATH = Path(__file__).parent / "_sider_manifest.json"
+_MANIFEST_PATH = Path(__file__).parent / "manifests" / "sider.json"
 
 _BASE_URL = "https://sideeffects.embl.de/media/download/"
 
@@ -85,7 +85,7 @@ def source_urls(version: str) -> dict[str, str]:
 
 def write_manifest(version: str = "4.1") -> dict:
     """Pin whatever SIDER currently serves (:mod:`fairfetched.utils.manifest`);
-    SIDER's URLs carry no version. Run by hand, then commit ``_sider_manifest.json``."""
+    SIDER's URLs carry no version. Run by hand, then commit ``manifests/sider.json``."""
     raw_paths = ensure_raw_files(version, force=True, verify=False)
     return manifest.write(raw_paths, _MANIFEST_PATH, sider_version=version)
 
@@ -127,7 +127,7 @@ def ensure_parquet_tables(
         }
         for name, cols in _COLUMNS.items()
     }
-    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
+    return raw.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
 def stitch_id_to_cid(stitch_id: pl.Expr) -> pl.Expr:
@@ -149,7 +149,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

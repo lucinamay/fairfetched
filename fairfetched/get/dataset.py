@@ -12,9 +12,17 @@ from fairfetched.get import (
     drugbank,
     papyrus,
     sider,
+    toxcast,
 )
-from fairfetched.get._chembl_tables import ChemblTables
-from fairfetched.get._papyrus_tables import PapyrusTables
+from fairfetched.get._table_autocomplete import (
+    AdrecsTables,
+    AdrecsTargetTables,
+    ChemblTables,
+    DrugbankTables,
+    PapyrusTables,
+    SiderTables,
+    ToxcastTables,
+)
 from fairfetched.utils import BASE_DIR
 from fairfetched.utils.typing import DatasetGetModule
 
@@ -105,6 +113,16 @@ class _SiderView(_View):
         return self._views["frequencies"]
 
 
+class _ToxcastView(_View):
+    @property
+    def targets(self) -> LazyFrame:
+        return self._views["targets"]
+
+    @property
+    def assay_annotations(self) -> LazyFrame:
+        return self._views["assay_annotations"]
+
+
 class _DrugbankView(_View):
     @property
     def drugs(self) -> LazyFrame:
@@ -124,7 +142,8 @@ class _DrugbankView(_View):
 
 
 class _SourceTables:
-    """Source tables as attributes; see fairfetched.get._tables."""
+    """Source tables as attributes (``db.tables.drug``) and by key (``db.tables["drug"]``);
+    the attributes come from fairfetched.get._table_autocomplete."""
 
     def __init__(self, owner: "_Base") -> None:
         self._owner = owner
@@ -132,6 +151,9 @@ class _SourceTables:
     @property
     def lfs(self) -> dict[str, LazyFrame]:
         return self._owner.lfs
+
+    def __getitem__(self, name: str) -> LazyFrame:
+        return self.lfs[name]
 
     def __str__(self) -> str:
         return str(self._owner)
@@ -145,6 +167,26 @@ class _ChemblSourceTables(_SourceTables, ChemblTables):
 
 
 class _PapyrusSourceTables(_SourceTables, PapyrusTables):
+    pass
+
+
+class _AdrecsSourceTables(_SourceTables, AdrecsTables):
+    pass
+
+
+class _AdrecsTargetSourceTables(_SourceTables, AdrecsTargetTables):
+    pass
+
+
+class _SiderSourceTables(_SourceTables, SiderTables):
+    pass
+
+
+class _ToxcastSourceTables(_SourceTables, ToxcastTables):
+    pass
+
+
+class _DrugbankSourceTables(_SourceTables, DrugbankTables):
     pass
 
 
@@ -175,9 +217,10 @@ class _Base:
 
     @cached_property
     def sources(self) -> dict[str, str]:
-
-        sources = self.module.source_urls(self.version)
-        return sources
+        """Download URLs; empty for offline demos (``version == "demo"``)."""
+        if self.version == "demo":
+            return {}
+        return self.module.source_urls(self.version)
 
     @cached_property
     def lfs(self) -> dict[str, LazyFrame]:
@@ -192,7 +235,7 @@ class _Base:
         return cls.module.available_versions()
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Chembl(_Base):
     """ChEMBL wrapper: download once, then read lazily.
 
@@ -203,12 +246,12 @@ class Chembl(_Base):
     >>> from fairfetched.get import Chembl
     >>> db = Chembl.demo()
     >>> db.view.compounds.collect().shape                    # joined domain views
-    (3, 20)
+    (5, 50)
     >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
-    >>> db.tables.molecule_dictionary.collect()["pref_name"].to_list()
-    ['Aspirin', 'Ibuprofen', 'Ibuprofen sodium']
-    >>> db.tables.molecule_dictionary.collect_schema().names()  # column names, no scan
-    ['molregno', 'chembl_id', 'pref_name', 'max_phase', 'molecule_type', 'withdrawn_flag', 'chirality']
+    >>> db.tables.molecule_dictionary.filter(molregno=1280).collect()["pref_name"].to_list()
+    ['ASPIRIN']
+    >>> db.tables.molecule_dictionary.collect_schema().names()[:4]  # column names, no scan
+    ['molregno', 'pref_name', 'chembl_id', 'max_phase']
     >>> len(db.lfs)                                          # every raw table
     26
     """
@@ -229,11 +272,11 @@ class Chembl(_Base):
 
     @classmethod
     def demo(cls) -> "Chembl":
-        """Tiny offline sample (3 molecules, 3 activities, 2 targets). See fairfetched.get._demo."""
+        """Tiny offline slice of ChEMBL 37 (5 molecules, 10 activities). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
-            parquet_paths=_demo.chembl_parquets(),
+            parquet_paths=_demo.parquets("chembl"),
             dir=_demo.DEMO_DIR / "chembl",
             module=cls.module,
         )
@@ -277,7 +320,7 @@ class Chembl(_Base):
         return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Papyrus(_Base):
     """Papyrus wrapper: download once, then read lazily.
 
@@ -288,13 +331,13 @@ class Papyrus(_Base):
     >>> from fairfetched.get import Papyrus
     >>> db = Papyrus.demo()
     >>> db.view.full.collect().shape            # bioactivity + protein, one flat frame
-    (3, 9)
-    >>> db.view.proteins.collect()["pref_name"].to_list()
-    ['Kinase 1', 'Kinase 2']
+    (10, 38)
+    >>> db.view.proteins.collect()["uniprot_id"].to_list()
+    ['KYNU_HUMAN', 'ST2A1_RAT']
     >>> db.tables.bioactivity.collect().height  # raw source tables
-    3
-    >>> db.tables.protein.collect_schema().names()  # column names, no scan
-    ['target_id', 'uniprot_id', 'target_chembl_id', 'pref_name']
+    10
+    >>> db.tables.protein.collect_schema().names()[:3]  # column names, no scan
+    ['target_id', 'uniprot_id', 'status']
     """
 
     module: DatasetGetModule = papyrus
@@ -313,11 +356,11 @@ class Papyrus(_Base):
 
     @classmethod
     def demo(cls) -> "Papyrus":
-        """Tiny offline sample (3 activities, 2 proteins). See fairfetched.get._demo."""
+        """Tiny offline slice of Papyrus 05.7 (10 activities, 2 proteins). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
-            parquet_paths=_demo.papyrus_parquets(),
+            parquet_paths=_demo.parquets("papyrus"),
             dir=_demo.DEMO_DIR / "papyrus",
             module=cls.module,
         )
@@ -352,7 +395,7 @@ class Papyrus(_Base):
         return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Adrecs(_Base):
     """ADReCS wrapper: download once, then read lazily.
 
@@ -375,8 +418,8 @@ class Adrecs(_Base):
         return _AdrecsView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _AdrecsSourceTables:
+        return _AdrecsSourceTables(self)
 
     @classmethod
     def from_version(
@@ -407,7 +450,7 @@ class Adrecs(_Base):
         return cls.from_version(adrecs.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class AdrecsTarget(_Base):
     """ADReCS-Target wrapper: download once, then read lazily.
 
@@ -429,8 +472,8 @@ class AdrecsTarget(_Base):
         return _AdrecsTargetView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _AdrecsTargetSourceTables:
+        return _AdrecsTargetSourceTables(self)
 
     @classmethod
     def from_version(
@@ -461,12 +504,12 @@ class AdrecsTarget(_Base):
         return cls.from_version(adrecs_target.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Sider(_Base):
     """SIDER wrapper: download once, then read lazily.
 
     SIDER's URLs are unversioned, so the release is pinned by content hash
-    (``fairfetched.get.sider._sider_manifest.json``); a changed upstream file
+    (``fairfetched/get/manifests/sider.json``); a changed upstream file
     raises on download. ``view`` holds the joined domain views ``drugs``,
     ``side_effects``, ``frequencies``::
 
@@ -486,8 +529,8 @@ class Sider(_Base):
         return _SiderView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _SiderSourceTables:
+        return _SiderSourceTables(self)
 
     @classmethod
     def from_version(
@@ -518,7 +561,88 @@ class Sider(_Base):
         return cls.from_version(sider.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
+class Toxcast(_Base):
+    """ToxCast (EPA invitrodb) wrapper: download once, then read lazily.
+
+    The 7.5 GB summary zip is fetched whole; only its ``mc5-6`` table is kept
+    (as Parquet). Clowder file ids are not content pins, so the release is
+    pinned by hash (``fairfetched/get/manifests/toxcast.json``).
+    ``view`` holds ``compounds``, ``bioactivity``, ``targets``,
+    ``assay_annotations``::
+
+        db = Toxcast.from_latest()
+        db.view.bioactivity.sink_parquet("toxcast_bioactivity.parquet")
+
+    ``Toxcast.demo()`` returns a tiny offline sample with the same API:
+
+    >>> from fairfetched.get import Toxcast
+    >>> db = Toxcast.demo()
+    >>> db.view.compounds.collect()["chnm"].to_list()
+    ['Acetamide', 'Acetaminophen', 'Acifluorfen']
+    >>> db.view.bioactivity.collect().shape     # rows without a chemical are dropped
+    (4, 76)
+    >>> sorted(db.view.bioactivity.collect()["aenm"].unique())
+    ['ACEA_ER_80hr', 'APR_HepG2_CellCycleArrest_1hr']
+    >>> db.view.targets.collect().shape         # long format: one row per (aeid, target_type)
+    (4, 7)
+    """
+
+    module: DatasetGetModule = toxcast
+
+    @staticmethod
+    def get_available_versions():
+        return toxcast.available_versions()
+
+    @cached_property
+    def view(self) -> _ToxcastView:
+        return _ToxcastView(self)
+
+    @cached_property
+    def tables(self) -> _ToxcastSourceTables:
+        return _ToxcastSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "Toxcast":
+        """Tiny offline slice of ToxCast 4.3 (3 chemicals, 2 endpoints). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.parquets("toxcast"),
+            dir=_demo.DEMO_DIR / "toxcast",
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str = "4.3",
+        root_dir: Path | str = f"{BASE_DIR}/toxcast",
+        force: bool = False,
+    ) -> "Toxcast":
+        dir = Path(root_dir) / str(version)
+        raw_paths = toxcast.ensure_raw_files(
+            str(version), raw_dir=dir / "raw", force=force
+        )
+        parquet_paths = toxcast.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/toxcast", force: bool = False
+    ) -> "Toxcast":
+        return cls.from_version(toxcast.latest(), root_dir=root_dir, force=force)
+
+
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Drugbank(_Base):
     """DrugBank wrapper. DrugBank is licensed, so there is no download: register
     your own ``full database.xml`` (or the release ``.zip``) once with
@@ -546,8 +670,8 @@ class Drugbank(_Base):
         return _DrugbankView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _DrugbankSourceTables:
+        return _DrugbankSourceTables(self)
 
     @classmethod
     def _build(

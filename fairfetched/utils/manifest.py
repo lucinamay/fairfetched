@@ -2,13 +2,13 @@
 
 ChEMBL and Papyrus pin a release through the version in their URL. A source
 that cannot -- SIDER serves whatever is current under a versionless URL --
-commits a manifest of sha256s beside its module instead. :func:`verify` raises
+commits a manifest of sha256s in ``fairfetched/get/manifests/`` instead. :func:`verify` raises
 when a downloaded file no longer matches the committed hash; :func:`write`
 regenerates the manifest. DrugBank has different drift messages (because local pins)
 
 A source module wires it in with two lines::
 
-    _MANIFEST_PATH = Path(__file__).parent / "_<name>_manifest.json"
+    _MANIFEST_PATH = Path(__file__).parent / "manifests" / "<name>.json"
     ...
     manifest.verify(raw_paths, _MANIFEST_PATH)      # inside ensure_raw_files
     manifest.write(raw_paths, _MANIFEST_PATH, version=version)  # by hand, then commit

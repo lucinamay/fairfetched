@@ -21,7 +21,7 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url, tables
+from fairfetched.utils import BASE_DIR, ensure_url, raw
 
 _lg = lg.getLogger(__name__)
 
@@ -103,8 +103,8 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
 
 
 # the names ``dataset.Adrecs`` expects of a source module
-ensure_parquet_tables = tables.ensure_parquet_tables  # xlsx: first sheet only; ADReCS core files are single-sheet
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+ensure_parquet_tables = raw.ensure_parquet_tables  # xlsx: first sheet only; ADReCS core files are single-sheet
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

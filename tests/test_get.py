@@ -12,8 +12,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fairfetched.get import _demo, chembl, papyrus
+from fairfetched.get import chembl, papyrus
 from fairfetched.get.dataset import Chembl, Papyrus
+from tests import sample_frames
 
 # ============================================================================
 # Global fixture to patch ensure_url for all tests
@@ -120,14 +121,18 @@ def temp_dir():
 
 @pytest.fixture
 def sample_chembl_parquets(temp_dir):
-    """ChEMBL sample tables (see fairfetched.get._demo) written as parquet."""
-    return _demo.write_parquets(_demo.chembl_frames(), temp_dir / "chembl_parquets")
+    """ChEMBL sample tables (see tests.sample_frames) written as parquet."""
+    return sample_frames.write_parquets(
+        sample_frames.chembl_frames(), temp_dir / "chembl_parquets"
+    )
 
 
 @pytest.fixture
 def sample_papyrus_parquets(temp_dir):
-    """Papyrus sample tables (see fairfetched.get._demo) written as parquet."""
-    return _demo.write_parquets(_demo.papyrus_frames(), temp_dir / "papyrus_parquets")
+    """Papyrus sample tables (see tests.sample_frames) written as parquet."""
+    return sample_frames.write_parquets(
+        sample_frames.papyrus_frames(), temp_dir / "papyrus_parquets"
+    )
 
 
 # ============================================================================

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url, tables
+from fairfetched.utils import BASE_DIR, ensure_url, raw
 
 from . import adrecs
 
@@ -97,10 +97,10 @@ def ensure_parquet_tables(
             "new_columns": _THREELEVER_COLUMNS,
         }
     }
-    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
+    return raw.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=adrecs._clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=adrecs._clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
