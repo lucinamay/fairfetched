@@ -20,6 +20,8 @@ from .mol_functions import (
     _binary_to_kekulized_smiles,
     _binary_to_mol,
     _binary_to_morgan_array,
+    _binary_to_scaffold_smiles,
+    _stable_hash64,
     _binary_to_smiles,
     _inchi_to_binary,
     _num_atoms,
@@ -111,7 +113,7 @@ class MolExpr(pl.Expr):
     ) -> "MolExpr":
         return cls(
             pl.col(col).map_batches(
-                lambda s: _map(_smiles_to_binary, s, pl.Binary, parallel, dedup),
+                lambda s, **_: _map(_smiles_to_binary, s, pl.Binary, parallel, dedup),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
             )
@@ -123,7 +125,7 @@ class MolExpr(pl.Expr):
     ) -> "MolExpr":
         return cls(
             pl.col(col).map_batches(
-                lambda s, return_dtype: _map(
+                lambda s, **_: _map(
                     _inchi_to_binary, s, pl.Binary, parallel, dedup
                 ),
                 return_dtype=pl.Binary,
@@ -144,7 +146,7 @@ class MolExpr(pl.Expr):
     ) -> "MolExpr":
         """Infer mol source from column dtype or first non-null value."""
 
-        def _infer(s: pl.Series) -> pl.Series:
+        def _infer(s: pl.Series, **_) -> pl.Series:
             if s.dtype == pl.Binary:
                 return s
             first = next((v for v in s if v is not None), None)
@@ -170,7 +172,7 @@ class MolExpr(pl.Expr):
         pipeline = MolPipeline(steps=tuple(steps))
         return MolExpr(
             self._expr.map_batches(
-                lambda s: _map(pipeline, s, pl.Binary, parallel, dedup),
+                lambda s, **_: _map(pipeline, s, pl.Binary, parallel, dedup),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
             )
@@ -183,7 +185,7 @@ class MolExpr(pl.Expr):
     def _apply(self, fn, dtype, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert objects within expression, with specifyable dtype"""
         return self._expr.map_batches(
-            lambda s: _map(fn, s, dtype, parallel, dedup),
+            lambda s, **_: _map(fn, s, dtype, parallel, dedup),
             return_dtype=dtype,
             is_elementwise=not parallel,
         )
@@ -238,6 +240,23 @@ class MolExpr(pl.Expr):
 
     def num_heavy_atoms(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         return self._apply(_num_heavy_atoms, pl.Int32, parallel, dedup)
+
+    def to_scaffold(
+        self, generic: bool = False, parallel: bool = False, dedup: bool = False
+    ) -> pl.Expr:
+        """Bemis–Murcko scaffold SMILES per molecule (pl.String)."""
+        fn = partial(_binary_to_scaffold_smiles, generic=generic)
+        return self._apply(fn, pl.String, parallel, dedup)
+
+    def scaffold_cluster(
+        self, generic: bool = False, parallel: bool = False, dedup: bool = False
+    ) -> pl.Expr:
+        """Dataset-independent cluster id per scaffold: stable 64-bit hash of the scaffold SMILES (pl.UInt64)."""
+        return self.to_scaffold(generic, parallel, dedup).map_batches(
+            lambda s, **_: _map(_stable_hash64, s, pl.UInt64, False, dedup),
+            return_dtype=pl.UInt64,
+            is_elementwise=True,
+        )
 
     def to_mol_objects(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert to actual Chem.Mol objects. Cannot be written to parquet"""
