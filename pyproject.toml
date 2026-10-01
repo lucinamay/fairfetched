@@ -21,7 +21,10 @@ standardise = [
     "chembl-structure-pipeline>=1.2.4",
     "papyrus-structure-pipeline>=0.0.5",
 ]
-split = ["nanoom>=0.1.0a20260815"] # fold assignment in standardize.split_expr
+split = [
+    "nanoom>=0.1.0a20260815", # fold assignment in standardize.split_expr
+    "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
+]
 dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",
@@ -56,7 +59,7 @@ fairfetched = { workspace = true }
 [dependency-groups]
 dev = [
     "chembl-structure-pipeline>=1.2.4",
-    "fairfetched",
+    "fairfetched[split]",
     "fastexcel>=0.12",
     "papyrus-structure-pipeline>=0.0.5",
     # "polars[gpu]>=1.35.2",
