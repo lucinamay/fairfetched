@@ -14,8 +14,15 @@ from fairfetched.get import (
     sider,
     toxcast,
 )
-from fairfetched.get._chembl_tables import ChemblTables
-from fairfetched.get._papyrus_tables import PapyrusTables
+from fairfetched.get._table_autocomplete import (
+    AdrecsTables,
+    AdrecsTargetTables,
+    ChemblTables,
+    DrugbankTables,
+    PapyrusTables,
+    SiderTables,
+    ToxcastTables,
+)
 from fairfetched.utils import BASE_DIR
 from fairfetched.utils.typing import DatasetGetModule
 
@@ -135,7 +142,8 @@ class _DrugbankView(_View):
 
 
 class _SourceTables:
-    """Source tables as attributes; see fairfetched.get._tables."""
+    """Source tables as attributes (``db.tables.drug``) and by key (``db.tables["drug"]``);
+    the attributes come from fairfetched.get._table_autocomplete."""
 
     def __init__(self, owner: "_Base") -> None:
         self._owner = owner
@@ -143,6 +151,9 @@ class _SourceTables:
     @property
     def lfs(self) -> dict[str, LazyFrame]:
         return self._owner.lfs
+
+    def __getitem__(self, name: str) -> LazyFrame:
+        return self.lfs[name]
 
     def __str__(self) -> str:
         return str(self._owner)
@@ -156,6 +167,26 @@ class _ChemblSourceTables(_SourceTables, ChemblTables):
 
 
 class _PapyrusSourceTables(_SourceTables, PapyrusTables):
+    pass
+
+
+class _AdrecsSourceTables(_SourceTables, AdrecsTables):
+    pass
+
+
+class _AdrecsTargetSourceTables(_SourceTables, AdrecsTargetTables):
+    pass
+
+
+class _SiderSourceTables(_SourceTables, SiderTables):
+    pass
+
+
+class _ToxcastSourceTables(_SourceTables, ToxcastTables):
+    pass
+
+
+class _DrugbankSourceTables(_SourceTables, DrugbankTables):
     pass
 
 
@@ -386,8 +417,8 @@ class Adrecs(_Base):
         return _AdrecsView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _AdrecsSourceTables:
+        return _AdrecsSourceTables(self)
 
     @classmethod
     def from_version(
@@ -440,8 +471,8 @@ class AdrecsTarget(_Base):
         return _AdrecsTargetView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _AdrecsTargetSourceTables:
+        return _AdrecsTargetSourceTables(self)
 
     @classmethod
     def from_version(
@@ -497,8 +528,8 @@ class Sider(_Base):
         return _SiderView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _SiderSourceTables:
+        return _SiderSourceTables(self)
 
     @classmethod
     def from_version(
@@ -567,8 +598,8 @@ class Toxcast(_Base):
         return _ToxcastView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _ToxcastSourceTables:
+        return _ToxcastSourceTables(self)
 
     @classmethod
     def demo(cls) -> "Toxcast":
@@ -638,8 +669,8 @@ class Drugbank(_Base):
         return _DrugbankView(self)
 
     @cached_property
-    def tables(self) -> dict[str, LazyFrame]:
-        return self.lfs
+    def tables(self) -> _DrugbankSourceTables:
+        return _DrugbankSourceTables(self)
 
     @classmethod
     def _build(
