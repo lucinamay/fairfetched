@@ -1,0 +1,102 @@
+"""Shared raw-file -> Parquet consolidation for the flat-file sources."""
+
+import logging as lg
+import lzma
+import shutil
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
+import polars as pl
+
+from fairfetched.utils.polars import _TEMP_FILES
+
+_lg = lg.getLogger(__name__)
+
+_SEPARATORS = {".tsv": "\t", ".txt": "\t", ".csv": ","}
+
+
+def decompress_to_temp(path: Path, dir: Path | str | None = None) -> Path:
+    """Decompress an ``.xz`` file to a temp file (system temp by default), removed
+    at exit. polars cannot stream a compressed ``.xz`` without buffering it whole."""
+    with tempfile.NamedTemporaryFile(
+        prefix=path.stem + ".",
+        suffix=Path(path.stem).suffix,
+        dir=dir,
+        delete=False,
+    ) as tmp:
+        _TEMP_FILES.append(tmp.name)
+        with lzma.open(path, "rb") as f_in:
+            shutil.copyfileobj(f_in, tmp)
+    return Path(tmp.name)
+
+
+def scan_table(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
+    """Lazy frame over one tabular file, reader chosen by suffix.
+
+    ``.xz`` is decompressed to a temp file first; ``.gz`` is read by polars
+    directly. The inner suffix picks the reader: ``.tsv``/``.txt`` (tab) and
+    ``.csv`` (comma) via ``scan_csv``, ``.xlsx`` via ``read_excel`` (not
+    streamable, for metadata-sized files), ``.parquet`` via ``scan_parquet``.
+    ``scan_kwargs`` go to that reader and override the inferred separator.
+    """
+    path = Path(path)
+    if path.suffix == ".xz":
+        return scan_table(decompress_to_temp(path), **scan_kwargs)
+    inner = (Path(path.stem) if path.suffix == ".gz" else path).suffix.lower()
+    if inner == ".xlsx":
+        return pl.read_excel(path, **scan_kwargs).lazy()
+    if inner == ".parquet":
+        return pl.scan_parquet(path, **scan_kwargs)
+    if inner in _SEPARATORS:
+        scan_kwargs.setdefault("separator", _SEPARATORS[inner])
+        scan_kwargs.setdefault("infer_schema_length", 10_000)
+        return pl.scan_csv(path, **scan_kwargs)
+    raise ValueError(f"cannot infer how to read {path.name!r}")
+
+
+def ensure_parquet_tables(
+    raw_paths: dict[str, Path],
+    table_dir: Path | str | None = None,
+    scan_kwargs: dict[str, dict] | None = None,
+    scan: Callable[[str, Path], pl.LazyFrame] | None = None,
+    table_names: dict[str, str] | None = None,
+) -> dict[str, Path]:
+    """Stream each raw file into ``<table_dir>/<table>.parquet``, untouched; skip
+    tables that exist. A table is written to ``.part`` and renamed, so an
+    interrupted run leaves no partial table.
+
+    ``scan_kwargs`` (per raw name) go to :func:`scan_table`; ``scan(name, path)``
+    replaces :func:`scan_table` for sources that need more (zip members,
+    casts). ``table_names`` renames raw name -> table name. ``table_dir``
+    defaults to ``<raw dir>/../parquet``.
+    """
+    table_dir = Path(
+        table_dir or next(iter(raw_paths.values())).parent.parent / "parquet"
+    )
+    table_dir.mkdir(exist_ok=True, parents=True)
+
+    out: dict[str, Path] = {}
+    for name, path_ in raw_paths.items():
+        table = (table_names or {}).get(name, name)
+        dest = out[table] = table_dir / f"{table}.parquet"
+        if dest.exists():
+            continue
+        _lg.info(f"parsing {path_} -> {dest}")
+        lf = (
+            scan(name, Path(path_))
+            if scan
+            else scan_table(path_, **(scan_kwargs or {}).get(name, {}))
+        )
+        part = dest.with_name(dest.name + ".part")
+        lf.sink_parquet(part)
+        part.replace(dest)
+    return out
+
+
+def scan_tables(
+    parquet_paths: dict[str, Path],
+    clean: Callable[[pl.LazyFrame], pl.LazyFrame] = lambda lf: lf,
+) -> dict[str, pl.LazyFrame]:
+    """Scan every Parquet table, applying ``clean`` lazily."""
+    return {name: clean(pl.scan_parquet(p)) for name, p in parquet_paths.items()}
