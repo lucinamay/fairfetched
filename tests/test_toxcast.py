@@ -125,11 +125,27 @@ class TestBuildViews:
     def views(self, tmp_path):
         tables = {
             # aeid 3 has no annotation row; a left join must keep it
-            "mc5_mc6": pl.DataFrame({"aeid": [1, 1, 2, 3], "spid": list("abcd")}),
+            # the last row is a blank well (no chemical)
+            "mc5_mc6": pl.DataFrame(
+                {
+                    "aeid": [1, 1, 2, 3],
+                    "spid": list("abcd"),
+                    "chid": [10, 10, 11, None],
+                    "casn": ["c10", "c10", "c11", None],
+                }
+            ),
             "assay_annotations": pl.DataFrame(
                 {c: [c, c] if c != "aeid" else [1, 2] for c in toxcast._ANNOTATION_COLS}
             ),
-            "cytotox": pl.DataFrame({"chid": [10, 11]}),
+            "cytotox": pl.DataFrame(
+                {
+                    "chid": [10, 11],
+                    "casn": ["c10", "c11"],
+                    "chnm": ["n10", "n11"],
+                    "dsstox_substance_id": ["d10", "d11"],
+                    "cytotox_lower_bound_um": [1.0, 2.0],
+                }
+            ),
             "assay_target_mappings": pl.DataFrame(
                 {"aeid": [1, 1], "target_type": ["aop", "key_event"]}
             ),
@@ -140,8 +156,16 @@ class TestBuildViews:
             df.write_parquet(paths[name])
         return toxcast.build_views(paths)
 
-    def test_bioactivity_keeps_one_row_per_measurement(self, views):
-        assert views["bioactivity"].collect().height == 4
+    def test_bioactivity_drops_rows_without_chemical(self, views):
+        bio = views["bioactivity"].collect()
+        assert bio["spid"].to_list() == ["a", "b", "c"]
+
+    def test_full_adds_only_cytotox_burst_columns_one_row_per_measurement(self, views):
+        full = views["full"].collect()
+        assert full.height == views["bioactivity"].collect().height
+        added = set(full.columns) - set(views["bioactivity"].collect_schema().names())
+        assert added == {"cytotox_lower_bound_um"}
+        assert full["cytotox_lower_bound_um"].to_list() == [1.0, 1.0, 2.0]
 
     def test_long_format_targets_not_joined_into_bioactivity(self, views):
         assert "target_type" not in views["bioactivity"].collect_schema().names()
@@ -215,7 +239,8 @@ class TestFullRelease:
 
     def test_bioactivity_join_keeps_every_row_and_annotates_all(self, lfs):
         bio = lfs[1]["bioactivity"]
-        assert bio.select(pl.len()).collect().item() == 3_527_285
+        assert bio.select(pl.len()).collect().item() == 3_527_285 - 9_383
+        assert bio.select(pl.col("chid").is_null().sum()).collect().item() == 0
         assert bio.select(pl.col("organism").is_null().sum()).collect().item() == 0
 
     def test_every_endpoint_has_an_annotation(self, lfs):
@@ -266,3 +291,9 @@ class TestFullRelease:
         assert mc.select(pl.col("ac50").is_null().sum()).collect().item() == 12_304
         hits = mc.filter(pl.col("hitc") >= 0.9)
         assert hits.select(pl.col("ac50").is_null().mean()).collect().item() < 1e-5
+
+    def test_full_keeps_every_bioactivity_row_and_has_cytotox_for_all(self, lfs):
+        full = lfs[1]["full"]
+        assert full.select(pl.len()).collect().item() == 3_527_285 - 9_383
+        nulls = full.select(pl.col("cytotox_lower_bound_um").is_null().sum())
+        assert nulls.collect().item() == 0

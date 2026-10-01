@@ -164,18 +164,30 @@ def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     - ``compounds``: ``cytotox`` verbatim, one row per chemical (``chid``)
     - ``bioactivity``: ``mc5_mc6`` (winning model fit per sample-endpoint) with
       endpoint name/description, organism, tissue and intended target from
-      ``assay_annotations`` on ``aeid``
+      ``assay_annotations`` on ``aeid``; rows without a chemical (``chid`` null:
+      media blanks and reference spids) are dropped
+    - ``full``: ``bioactivity`` with the ``cytotox`` burst columns, joined m:1 on
+      ``chid``
     - ``targets``: ``assay_target_mappings`` verbatim; long format, one row per
       (``aeid``, ``target_type``), so not joined into ``bioactivity``
     - ``assay_annotations``: all 63 assay metadata columns
     """
     lfs = cleanly_scan_parquet_tables(parquet_paths)
-    bioactivity = lfs["mc5_mc6"].join(
-        lfs["assay_annotations"].select(_ANNOTATION_COLS), on="aeid", how="left"
+    bioactivity = (
+        lfs["mc5_mc6"]
+        .drop_nulls("chid")
+        .join(lfs["assay_annotations"].select(_ANNOTATION_COLS), on="aeid", how="left")
+    )
+    full = bioactivity.join(
+        lfs["cytotox"].drop("casn", "chnm", "dsstox_substance_id"),
+        on="chid",
+        how="left",
+        validate="m:1",
     )
     return {
         "compounds": lfs["cytotox"],
         "bioactivity": bioactivity,
+        "full": full,
         "targets": lfs["assay_target_mappings"],
         "assay_annotations": lfs["assay_annotations"],
     }
