@@ -477,7 +477,7 @@ class Sider(_Base):
     """SIDER wrapper: download once, then read lazily.
 
     SIDER's URLs are unversioned, so the release is pinned by content hash
-    (``fairfetched.get.sider._sider_manifest.json``); a changed upstream file
+    (``fairfetched/get/manifests/sider.json``); a changed upstream file
     raises on download. ``view`` holds the joined domain views ``drugs``,
     ``side_effects``, ``frequencies``::
 
@@ -535,7 +535,7 @@ class Toxcast(_Base):
 
     The 7.5 GB summary zip is fetched whole; only its ``mc5-6`` table is kept
     (as Parquet). Clowder file ids are not content pins, so the release is
-    pinned by hash (``fairfetched.get.toxcast._toxcast_manifest.json``).
+    pinned by hash (``fairfetched/get/manifests/toxcast.json``).
     ``view`` holds ``compounds``, ``bioactivity``, ``targets``,
     ``assay_annotations``::
 

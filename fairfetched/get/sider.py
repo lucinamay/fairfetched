@@ -2,7 +2,7 @@
 label-extracted frequencies.
 
 SIDER's download URLs carry no version and always serve whatever is
-current, so there is nothing in the URL to pin a release. ``_sider_manifest.json``
+current, so there is nothing in the URL to pin a release. ``manifests/sider.json``
 is the pin instead (via :mod:`fairfetched.utils.manifest`): download raises if a
 file's sha256 no longer matches, which means upstream moved and every count
 derived from SIDER has to be rechecked. Regenerate it with
@@ -26,7 +26,7 @@ from fairfetched.utils import BASE_DIR, ensure_url, manifest, raw
 _lg = lg.getLogger(__name__)
 
 SIDER_DIR = BASE_DIR / "sider"
-_MANIFEST_PATH = Path(__file__).parent / "_sider_manifest.json"
+_MANIFEST_PATH = Path(__file__).parent / "manifests" / "sider.json"
 
 _BASE_URL = "https://sideeffects.embl.de/media/download/"
 
@@ -85,7 +85,7 @@ def source_urls(version: str) -> dict[str, str]:
 
 def write_manifest(version: str = "4.1") -> dict:
     """Pin whatever SIDER currently serves (:mod:`fairfetched.utils.manifest`);
-    SIDER's URLs carry no version. Run by hand, then commit ``_sider_manifest.json``."""
+    SIDER's URLs carry no version. Run by hand, then commit ``manifests/sider.json``."""
     raw_paths = ensure_raw_files(version, force=True, verify=False)
     return manifest.write(raw_paths, _MANIFEST_PATH, sider_version=version)
 

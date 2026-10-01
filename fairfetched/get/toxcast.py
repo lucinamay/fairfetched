@@ -19,7 +19,7 @@ from fairfetched.utils.raw import scan_raw
 _lg = lg.getLogger(__name__)
 
 TOXCAST_DIR = BASE_DIR / "toxcast"
-_MANIFEST_PATH = Path(__file__).parent / "_toxcast_manifest.json"
+_MANIFEST_PATH = Path(__file__).parent / "manifests" / "toxcast.json"
 
 _BASE_URL = "https://clowder.edap-cluster.com/files/{}/blob"
 
