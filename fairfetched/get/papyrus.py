@@ -15,9 +15,9 @@ from fairfetched.utils import (
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
-    tables,
+    raw,
 )
-from fairfetched.utils.tables import scan_raw
+from fairfetched.utils.raw import scan_raw
 from fairfetched.utils.typing import BioactivityDBViews
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
@@ -83,8 +83,8 @@ def _scan_raw(name: str, path: Path) -> pl.LazyFrame:
     return lf
 
 
-# the table_dir default and README skip live in tables.ensure_parquet_tables
-ensure_parquet_tables = partial(tables.ensure_parquet_tables, scanner=_scan_raw)
+# the table_dir default and README skip live in raw.ensure_parquet_tables
+ensure_parquet_tables = partial(raw.ensure_parquet_tables, scanner=_scan_raw)
 
 
 def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -92,7 +92,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.pipe(lowercase_columns).rename({"uniprotid": "uniprot_id"}, strict=False)
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:

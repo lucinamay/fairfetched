@@ -21,7 +21,7 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, ensure_url, manifest, tables
+from fairfetched.utils import BASE_DIR, ensure_url, manifest, raw
 
 _lg = lg.getLogger(__name__)
 
@@ -127,7 +127,7 @@ def ensure_parquet_tables(
         }
         for name, cols in _COLUMNS.items()
     }
-    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
+    return raw.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
 def stitch_id_to_cid(stitch_id: pl.Expr) -> pl.Expr:
@@ -149,7 +149,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

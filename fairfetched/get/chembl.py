@@ -13,7 +13,7 @@ from fairfetched.utils import (
     ensure_url,
     file_suffix_from_url,
     lowercase_columns,
-    tables,
+    raw,
 )
 from fairfetched.utils.typing import BioactivityDBViews
 
@@ -104,7 +104,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 # should be present v20+ @TODO: devise better system for pre-v20 if needed

@@ -37,7 +37,7 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, manifest, tables
+from fairfetched.utils import BASE_DIR, manifest, raw
 
 _lg = lg.getLogger(__name__)
 
@@ -478,7 +478,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.with_columns(pl.col(pl.String).replace({"": None}))
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

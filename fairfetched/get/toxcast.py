@@ -12,9 +12,9 @@ from pathlib import Path
 import polars as pl
 import polars.selectors as cs
 
-from fairfetched.utils import BASE_DIR, ensure_url, manifest, tables
+from fairfetched.utils import BASE_DIR, ensure_url, manifest, raw
 from fairfetched.utils.polars import _TEMP_FILES
-from fairfetched.utils.tables import scan_raw
+from fairfetched.utils.raw import scan_raw
 
 _lg = lg.getLogger(__name__)
 
@@ -136,7 +136,7 @@ def ensure_parquet_tables(
 ) -> dict[str, Path]:
     """Consolidate each raw file into a Parquet table, untouched. The summary
     zip yields ``mc5_mc6``; the xlsx files keep their names."""
-    return tables.ensure_parquet_tables(
+    return raw.ensure_parquet_tables(
         raw_paths, table_dir, scanner=_scan, table_names=_TABLE_NAME
     )
 
@@ -155,7 +155,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     )
 
 
-cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
+cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
