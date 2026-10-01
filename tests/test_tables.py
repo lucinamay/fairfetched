@@ -33,7 +33,7 @@ class TestScanTable:
         p.write_bytes(gzip.compress(_TSV.encode()))
         assert tables.scan_raw(p).collect().shape == (2, 2)
 
-    def test_xz_is_decompressed_to_temp(self, tmp_path):
+    def test_xz_is_decompressed_beside_archive(self, tmp_path):
         p = tmp_path / "t.tsv.xz"
         p.write_bytes(lzma.compress(_TSV.encode()))
         assert tables.scan_raw(p).collect().shape == (2, 2)
@@ -59,6 +59,25 @@ class TestEnsureParquetTables:
         (d / "one.tsv").write_text(_TSV)
         (d / "two.tsv").write_text(_TSV)
         return {"one": d / "one.tsv", "two": d / "two.tsv"}
+
+    def test_xz_decompressed_file_removed(self, tmp_path):
+        p = tmp_path / "raw" / "t.tsv.xz"
+        p.parent.mkdir()
+        p.write_bytes(lzma.compress(_TSV.encode()))
+        out = tables.ensure_parquet_tables({"t": p})
+        assert pl.read_parquet(out["t"]).shape == (2, 2)
+        assert not p.with_suffix("").exists()
+
+    def test_xz_decompressed_file_removed_on_failure(self, tmp_path):
+        p = tmp_path / "raw" / "t.tsv.xz"
+        p.parent.mkdir()
+        p.write_bytes(lzma.compress(_TSV.encode()))
+        with pytest.raises(pl.exceptions.PolarsError):
+            tables.ensure_parquet_tables(
+                {"t": p}, scan_kwargs={"t": {"schema": {"zz": pl.Int64}}}
+            )
+        assert not p.with_suffix("").exists()
+        assert not (tmp_path / "parquet" / "t.parquet").exists()
 
     def test_default_dir_names_and_values(self, raw, tmp_path):
         out = tables.ensure_parquet_tables(raw, table_names={"two": "renamed"})

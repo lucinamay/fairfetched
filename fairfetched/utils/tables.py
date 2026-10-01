@@ -3,38 +3,30 @@
 import logging as lg
 import lzma
 import shutil
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
-
-from fairfetched.utils.polars import _TEMP_FILES
 
 _lg = lg.getLogger(__name__)
 
 _SEPARATORS = {".tsv": "\t", ".txt": "\t", ".csv": ","}
 
 
-def decompress_to_temp(path: Path, dir: Path | str | None = None) -> Path:
-    """Decompress an ``.xz`` file to a temp file (system temp by default), removed
-    at exit. polars cannot stream a compressed ``.xz`` without buffering it whole."""
-    with tempfile.NamedTemporaryFile(
-        prefix=path.stem + ".",
-        suffix=Path(path.stem).suffix,
-        dir=dir,
-        delete=False,
-    ) as tmp:
-        _TEMP_FILES.append(tmp.name)
-        with lzma.open(path, "rb") as f_in:
-            shutil.copyfileobj(f_in, tmp)
-    return Path(tmp.name)
+def decompress_xz(path: Path) -> Path:
+    """Decompress ``<name>.xz`` to ``<name>`` beside the archive, overwriting any
+    leftover from an interrupted run. polars cannot stream a compressed ``.xz``
+    without buffering it whole; the caller removes the file after the sink."""
+    out = path.with_suffix("")
+    with lzma.open(path, "rb") as f_in, out.open("wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    return out
 
 
 def scan_raw(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
     """Lazy frame over one tabular file, reader chosen by suffix.
 
-    ``.xz`` is decompressed to a temp file first; ``.gz`` is read by polars
+    ``.xz`` is decompressed beside the archive first; ``.gz`` is read by polars
     directly. The inner suffix picks the reader: ``.tsv``/``.txt`` (tab) and
     ``.csv`` (comma) via ``scan_csv``, ``.xlsx`` via ``read_excel`` (not
     streamable, for metadata-sized files).
@@ -42,7 +34,7 @@ def scan_raw(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
     """
     path = Path(path)
     if path.suffix == ".xz":
-        return scan_raw(decompress_to_temp(path), **scan_kwargs)
+        return scan_raw(decompress_xz(path), **scan_kwargs)
     inner = (Path(path.stem) if path.suffix == ".gz" else path).suffix.lower()
     if inner == ".xlsx":
         return pl.read_excel(path, **scan_kwargs).lazy()
@@ -83,14 +75,18 @@ def ensure_parquet_tables(
         if dest.exists():
             continue
         _lg.info(f"parsing {path_} -> {dest}")
-        lf = (
-            scanner(name, Path(path_))
-            if scanner
-            else scan_raw(path_, **(scan_kwargs or {}).get(name, {}))
-        )
         part = dest.with_name(dest.name + ".part")
-        lf.sink_parquet(part)
-        part.replace(dest)
+        try:
+            lf = (
+                scanner(name, Path(path_))
+                if scanner
+                else scan_raw(path_, **(scan_kwargs or {}).get(name, {}))
+            )
+            lf.sink_parquet(part)
+            part.replace(dest)
+        finally:
+            if Path(path_).suffix == ".xz":
+                Path(path_).with_suffix("").unlink(missing_ok=True)
     return out
 
 
