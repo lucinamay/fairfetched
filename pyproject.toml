@@ -25,10 +25,12 @@ split = [
     "nanoom>=0.1.0a20260815", # fold assignment in standardize.split_expr
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
 ]
+rough = ["scipy>=1.6"] # distances + clustering in standardize.rough_expr; 1.6 adds integrate.trapezoid
 dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",
     "fairfetched[split]",
+    "fairfetched[rough]",
     "fairfetched[standardise]",
     "fairfetched[adrecs]",
     "fairfetched[toxcast]",
@@ -60,6 +62,7 @@ fairfetched = { workspace = true }
 dev = [
     "chembl-structure-pipeline>=1.2.4",
     "fairfetched[split]",
+    "fairfetched[rough]",
     "fastexcel>=0.12",
     "papyrus-structure-pipeline>=0.0.5",
     # "polars[gpu]>=1.35.2",
