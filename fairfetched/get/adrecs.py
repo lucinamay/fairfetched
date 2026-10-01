@@ -9,6 +9,9 @@ Prefer the ``dataset.Adrecs`` wrapper; standalone use::
 
 ``pl.read_excel`` needs an Excel engine (``fastexcel``); add it to the project
 dependencies before running.
+
+ADReCSTarget license is https://creativecommons.org/licenses/by-nc-sa/4.0/, (see https://bioinf.xmu.edu.cn/ADReCS-Target/download.jsp)
+ADReCS itself does not state any license.
 """
 
 import logging as lg
