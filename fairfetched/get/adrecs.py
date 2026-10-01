@@ -16,6 +16,7 @@ ADReCS itself does not state any license.
 
 import logging as lg
 import re
+from functools import partial
 from pathlib import Path
 
 import polars as pl
@@ -101,24 +102,9 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.with_columns(pl.col(pl.String).replace(_NULL_TOKENS))
 
 
-def ensure_parquet_tables(
-    raw_paths: dict[str, Path], table_dir: Path | str | None = None
-) -> dict[str, Path]:
-    """Consolidate each raw file into a Parquet table, untouched: original
-    columns, original values. Cleaning happens later, on scan.
-    ponytail: xlsx first sheet only; ADReCS core files are single-sheet."""
-    return tables.ensure_parquet_tables(raw_paths, table_dir)
-
-
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    """Scan a raw Parquet and apply :func:`_clean` lazily."""
-    return _clean(pl.scan_parquet(path_))
-
-
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    return tables.scan_tables(parquet_paths, _clean)
+# the names ``dataset.Adrecs`` expects of a source module
+ensure_parquet_tables = tables.ensure_parquet_tables  # xlsx: first sheet only; ADReCS core files are single-sheet
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

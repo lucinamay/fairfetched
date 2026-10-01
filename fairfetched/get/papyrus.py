@@ -4,6 +4,7 @@ This module provides functions to ensure the presence of raw and cleaned Papyrus
 and defines the Papyrus_57 database configuration.
 """
 
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from fairfetched.utils import (
     lowercase_columns,
     tables,
 )
-from fairfetched.utils.tables import scan_table
+from fairfetched.utils.tables import scan_raw
 from fairfetched.utils.typing import BioactivityDBViews
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
@@ -61,8 +62,8 @@ def ensure_raw_files(
     }
 
 
-def _scan(name: str, path: Path) -> pl.LazyFrame:
-    lf = scan_table(
+def _scan_raw(name: str, path: Path) -> pl.LazyFrame:
+    lf = scan_raw(
         path,
         infer_schema=False,
         schema_overrides={
@@ -82,31 +83,16 @@ def _scan(name: str, path: Path) -> pl.LazyFrame:
     return lf
 
 
-def ensure_parquet_tables(
-    raw_paths: dict[str, Path],
-    table_dir: Path | str | None = None,
-) -> dict[str, Path]:
-    """Streams each raw file into a Parquet table for lazy loading; README skipped.
-    Default ``table_dir`` is ``<raw dir>/../parquet``."""
-    raw = {k: v for k, v in raw_paths.items() if k != "readme"}
-    return tables.ensure_parquet_tables(raw, table_dir, scan=_scan)
+# the table_dir default and README skip live in tables.ensure_parquet_tables
+ensure_parquet_tables = partial(tables.ensure_parquet_tables, scanner=_scan_raw)
 
 
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    """Scan table Parquet files and apply dataset-specific column cleanup."""
+def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Lowercase columns & protein table's ``uniprotid`` => ``uniprot_id``"""
+    return lf.pipe(lowercase_columns).rename({"uniprotid": "uniprot_id"}, strict=False)
 
-    return {
-        "protein": (
-            pl.scan_parquet(parquet_paths["protein"])
-            .pipe(lowercase_columns)
-            .rename({"uniprotid": "uniprot_id"})
-        ),
-        "bioactivity": (
-            pl.scan_parquet(parquet_paths["bioactivity"]).pipe(lowercase_columns)
-        ),
-    }
+
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:

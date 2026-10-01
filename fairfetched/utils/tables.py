@@ -31,23 +31,21 @@ def decompress_to_temp(path: Path, dir: Path | str | None = None) -> Path:
     return Path(tmp.name)
 
 
-def scan_table(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
+def scan_raw(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
     """Lazy frame over one tabular file, reader chosen by suffix.
 
     ``.xz`` is decompressed to a temp file first; ``.gz`` is read by polars
     directly. The inner suffix picks the reader: ``.tsv``/``.txt`` (tab) and
     ``.csv`` (comma) via ``scan_csv``, ``.xlsx`` via ``read_excel`` (not
-    streamable, for metadata-sized files), ``.parquet`` via ``scan_parquet``.
+    streamable, for metadata-sized files).
     ``scan_kwargs`` go to that reader and override the inferred separator.
     """
     path = Path(path)
     if path.suffix == ".xz":
-        return scan_table(decompress_to_temp(path), **scan_kwargs)
+        return scan_raw(decompress_to_temp(path), **scan_kwargs)
     inner = (Path(path.stem) if path.suffix == ".gz" else path).suffix.lower()
     if inner == ".xlsx":
         return pl.read_excel(path, **scan_kwargs).lazy()
-    if inner == ".parquet":
-        return pl.scan_parquet(path, **scan_kwargs)
     if inner in _SEPARATORS:
         scan_kwargs.setdefault("separator", _SEPARATORS[inner])
         scan_kwargs.setdefault("infer_schema_length", 10_000)
@@ -59,15 +57,15 @@ def ensure_parquet_tables(
     raw_paths: dict[str, Path],
     table_dir: Path | str | None = None,
     scan_kwargs: dict[str, dict] | None = None,
-    scan: Callable[[str, Path], pl.LazyFrame] | None = None,
+    scanner: Callable[[str, Path], pl.LazyFrame] | None = None,
     table_names: dict[str, str] | None = None,
 ) -> dict[str, Path]:
     """Stream each raw file into ``<table_dir>/<table>.parquet``, untouched; skip
-    tables that exist. A table is written to ``.part`` and renamed, so an
+    tables that exist and the ``readme`` entry. A table is written to ``.part`` and renamed, so an
     interrupted run leaves no partial table.
 
-    ``scan_kwargs`` (per raw name) go to :func:`scan_table`; ``scan(name, path)``
-    replaces :func:`scan_table` for sources that need more (zip members,
+    ``scan_kwargs`` (per raw name) go to :func:`scan_raw`; ``scanner(name, path)``
+    replaces :func:`scan_raw` for sources that need more (zip members,
     casts). ``table_names`` renames raw name -> table name. ``table_dir``
     defaults to ``<raw dir>/../parquet``.
     """
@@ -78,15 +76,17 @@ def ensure_parquet_tables(
 
     out: dict[str, Path] = {}
     for name, path_ in raw_paths.items():
+        if name == "readme":
+            continue
         table = (table_names or {}).get(name, name)
         dest = out[table] = table_dir / f"{table}.parquet"
         if dest.exists():
             continue
         _lg.info(f"parsing {path_} -> {dest}")
         lf = (
-            scan(name, Path(path_))
-            if scan
-            else scan_table(path_, **(scan_kwargs or {}).get(name, {}))
+            scanner(name, Path(path_))
+            if scanner
+            else scan_raw(path_, **(scan_kwargs or {}).get(name, {}))
         )
         part = dest.with_name(dest.name + ".part")
         lf.sink_parquet(part)
@@ -94,7 +94,7 @@ def ensure_parquet_tables(
     return out
 
 
-def scan_tables(
+def scan_parquets(
     parquet_paths: dict[str, Path],
     clean: Callable[[pl.LazyFrame], pl.LazyFrame] = lambda lf: lf,
 ) -> dict[str, pl.LazyFrame]:

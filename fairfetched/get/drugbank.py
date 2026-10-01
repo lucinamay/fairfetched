@@ -32,11 +32,12 @@ import shutil
 import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 import polars as pl
 
-from fairfetched.utils import BASE_DIR, manifest
+from fairfetched.utils import BASE_DIR, manifest, tables
 
 _lg = lg.getLogger(__name__)
 
@@ -477,14 +478,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf.with_columns(pl.col(pl.String).replace({"": None}))
 
 
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    return _clean(pl.scan_parquet(path_))
-
-
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    return {name: cleanly_scan_parquet(p) for name, p in parquet_paths.items()}
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

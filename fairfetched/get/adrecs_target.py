@@ -18,13 +18,14 @@ dependencies before running.
 """
 
 import logging as lg
+from functools import partial
 from pathlib import Path
 
 import polars as pl
 
 from fairfetched.utils import BASE_DIR, ensure_url, tables
 
-from .adrecs import cleanly_scan_parquet
+from . import adrecs
 
 _lg = lg.getLogger(__name__)
 
@@ -99,11 +100,7 @@ def ensure_parquet_tables(
     return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    """Scan raw Parquet paths and apply :func:`~fairfetched.get.adrecs._clean` lazily."""
-    return {name: cleanly_scan_parquet(p) for name, p in parquet_paths.items()}
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=adrecs._clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:

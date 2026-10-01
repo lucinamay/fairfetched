@@ -23,7 +23,7 @@ class TestScanTable:
     def test_separator_from_suffix(self, tmp_path, name, body, sep):
         p = tmp_path / name
         p.write_text(body)
-        assert tables.scan_table(p).collect().to_dict(as_series=False) == {
+        assert tables.scan_raw(p).collect().to_dict(as_series=False) == {
             "a": [1, 2],
             "b": ["x", "y"],
         }
@@ -31,26 +31,24 @@ class TestScanTable:
     def test_gz(self, tmp_path):
         p = tmp_path / "t.tsv.gz"
         p.write_bytes(gzip.compress(_TSV.encode()))
-        assert tables.scan_table(p).collect().shape == (2, 2)
+        assert tables.scan_raw(p).collect().shape == (2, 2)
 
     def test_xz_is_decompressed_to_temp(self, tmp_path):
         p = tmp_path / "t.tsv.xz"
         p.write_bytes(lzma.compress(_TSV.encode()))
-        assert tables.scan_table(p).collect().shape == (2, 2)
+        assert tables.scan_raw(p).collect().shape == (2, 2)
 
     def test_kwargs_override_inferred_separator(self, tmp_path):
         p = tmp_path / "t.txt"
         p.write_text("1#x\n2#y\n")
-        lf = tables.scan_table(
-            p, separator="#", has_header=False, new_columns=["a", "b"]
-        )
+        lf = tables.scan_raw(p, separator="#", has_header=False, new_columns=["a", "b"])
         assert lf.collect()["b"].to_list() == ["x", "y"]
 
     @pytest.mark.parametrize("name", ["t.bin", "t.gz", "t"])
     def test_unknown_suffix_raises(self, tmp_path, name):
         (tmp_path / name).write_bytes(b"x")
         with pytest.raises(ValueError):
-            tables.scan_table(tmp_path / name)
+            tables.scan_raw(tmp_path / name)
 
 
 class TestEnsureParquetTables:
@@ -81,11 +79,11 @@ class TestEnsureParquetTables:
             raise RuntimeError("scan failed")
 
         with pytest.raises(RuntimeError):
-            tables.ensure_parquet_tables(raw, scan=boom)
+            tables.ensure_parquet_tables(raw, scanner=boom)
         assert not list((tmp_path / "parquet").glob("*.parquet"))
 
     def test_failed_sink_leaves_no_final_file(self, raw, tmp_path):
         bad = pl.scan_csv(raw["one"]).with_columns(pl.col("b").cast(pl.Int64))
         with pytest.raises(pl.exceptions.PolarsError):
-            tables.ensure_parquet_tables({"one": raw["one"]}, scan=lambda n, p: bad)
+            tables.ensure_parquet_tables({"one": raw["one"]}, scanner=lambda n, p: bad)
         assert not (tmp_path / "parquet" / "one.parquet").exists()

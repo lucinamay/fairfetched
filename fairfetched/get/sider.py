@@ -16,6 +16,7 @@ Prefer the ``dataset.Sider`` wrapper; standalone use::
 """
 
 import logging as lg
+from functools import partial
 from pathlib import Path
 
 import polars as pl
@@ -115,19 +116,18 @@ def ensure_parquet_tables(
     raw_paths: dict[str, Path], table_dir: Path | str | None = None
 ) -> dict[str, Path]:
     """Consolidate each raw file into a Parquet table, untouched: README columns,
-    original values. Cleaning happens later, on scan. README is skipped."""
-    raw = {k: v for k, v in raw_paths.items() if k != "readme"}
+    original values. Cleaning happens later, on scan."""
     scan_kwargs = {
-        name: dict(
-            has_header=False,
-            new_columns=cols,
+        name: {
+            "has_header": False,
+            "new_columns": cols,
             # SIDER's term names carry unescaped double quotes ('"Ventilation"
             # pneumonitis'), so quote parsing has to be off.
-            quote_char=None,
-        )
+            "quote_char": None,
+        }
         for name, cols in _COLUMNS.items()
     }
-    return tables.ensure_parquet_tables(raw, table_dir, scan_kwargs)
+    return tables.ensure_parquet_tables(raw_paths, table_dir, scan_kwargs)
 
 
 def stitch_id_to_cid(stitch_id: pl.Expr) -> pl.Expr:
@@ -149,14 +149,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf
 
 
-def cleanly_scan_parquet(path_: Path | str) -> pl.LazyFrame:
-    return _clean(pl.scan_parquet(path_))
-
-
-def cleanly_scan_parquet_tables(
-    parquet_paths: dict[str, Path],
-) -> dict[str, pl.LazyFrame]:
-    return tables.scan_tables(parquet_paths, _clean)
+cleanly_scan_parquet_tables = partial(tables.scan_parquets, clean=_clean)
 
 
 def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
