@@ -217,9 +217,10 @@ class _Base:
 
     @cached_property
     def sources(self) -> dict[str, str]:
-
-        sources = self.module.source_urls(self.version)
-        return sources
+        """Download URLs; empty for offline demos (``version == "demo"``)."""
+        if self.version == "demo":
+            return {}
+        return self.module.source_urls(self.version)
 
     @cached_property
     def lfs(self) -> dict[str, LazyFrame]:
@@ -234,7 +235,7 @@ class _Base:
         return cls.module.available_versions()
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Chembl(_Base):
     """ChEMBL wrapper: download once, then read lazily.
 
@@ -319,7 +320,7 @@ class Chembl(_Base):
         return cls.from_version(version=chembl.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Papyrus(_Base):
     """Papyrus wrapper: download once, then read lazily.
 
@@ -394,7 +395,7 @@ class Papyrus(_Base):
         return cls.from_version(version=papyrus.latest(), root_dir=root_dir)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Adrecs(_Base):
     """ADReCS wrapper: download once, then read lazily.
 
@@ -449,7 +450,7 @@ class Adrecs(_Base):
         return cls.from_version(adrecs.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class AdrecsTarget(_Base):
     """ADReCS-Target wrapper: download once, then read lazily.
 
@@ -503,7 +504,7 @@ class AdrecsTarget(_Base):
         return cls.from_version(adrecs_target.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Sider(_Base):
     """SIDER wrapper: download once, then read lazily.
 
@@ -560,7 +561,7 @@ class Sider(_Base):
         return cls.from_version(sider.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Toxcast(_Base):
     """ToxCast (EPA invitrodb) wrapper: download once, then read lazily.
 
@@ -641,7 +642,7 @@ class Toxcast(_Base):
         return cls.from_version(toxcast.latest(), root_dir=root_dir, force=force)
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
 class Drugbank(_Base):
     """DrugBank wrapper. DrugBank is licensed, so there is no download: register
     your own ``full database.xml`` (or the release ``.zip``) once with
