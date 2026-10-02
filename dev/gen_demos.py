@@ -1,22 +1,48 @@
 # run with `uv run python -m dev.gen_demos`
 """Regenerate ``fairfetched/get/_demo/<dataset>/*.parquet`` as row slices of the
-real releases cached under ``BASE_DIR`` (ChEMBL, Papyrus, ToxCast).
+real releases cached under ``BASE_DIR`` (ChEMBL, Papyrus, ToxCast, PubChem).
+``uv run python -m dev.gen_demos toxcast pubchem_bioassay`` regenerates only
+the named datasets.
 
 Each slice is seeded on a few entities and closed over the foreign keys the
 views join on, so every view of ``<Dataset>.demo()`` is non-empty and every
 row is verbatim from the release. Sider/Adrecs/Drugbank have no demo.
 """
 
+import sys
 from pathlib import Path
 
 import polars as pl
 
-from fairfetched.get import chembl, papyrus, toxcast
+from fairfetched.get import (
+    chembl,
+    papyrus,
+    pubchem_bioassay,
+    pubchem_compound,
+    toxcast,
+)
 from fairfetched.utils import BASE_DIR
 
 OUT = Path(__file__).parents[1] / "fairfetched" / "get" / "_demo"
 
-_VERSIONS = {"chembl": "37", "papyrus": "05.7", "toxcast": "4.3"}
+_VERSIONS = {
+    "chembl": "37",
+    "papyrus": "05.7",
+    "toxcast": "4.3",
+    "pubchem_bioassay": "20260929",
+    "pubchem_compound": "20260927",
+}
+
+# a 4-substance EC50 assay on the rat M4 receptor; 2 substances of an Hsp90
+# screen annotated with two targets; the lowest AID of each depositor in
+# pubchem_bioassay.EXCLUDED_SOURCES, one bioactivity row each
+_PUBCHEM_ASSAY_AID = 1938
+_PUBCHEM_TWO_TARGET_AID = 429
+_PUBCHEM_TWO_TARGET_SIDS = 2
+_PUBCHEM_EXCLUDED_AIDS = [1188, 2900, 651631, 2202554, 2282666]
+
+# aspirin, ibuprofen, and a compound CID-InChI-Key has no row for
+_PUBCHEM_SEED_CIDS = [2244, 3672, 164109855]
 
 # aspirin, ibuprofen, carbachol (a salt) and its parent, a peptide
 _CHEMBL_SEED_MOLREGNOS = [1280, 11674, 892, 94790, 197]
@@ -148,15 +174,64 @@ def toxcast_slice() -> dict[str, pl.DataFrame]:
     }
 
 
-def write_all() -> None:
-    """Write the three slices to ``OUT/<dataset>/<table>.parquet``, print row counts and
-    bytes, and collect every view built from the written files (fails if one is
-    unbuildable)."""
-    for dataset, module, slices in (
-        ("chembl", chembl, chembl_slice()),
-        ("papyrus", papyrus, papyrus_slice()),
-        ("toxcast", toxcast, toxcast_slice()),
-    ):
+def pubchem_bioassay_slice() -> dict[str, pl.DataFrame]:
+    """``bioactivities`` of the seed assays and the ``bioassays``, ``aid_target``
+    and ``sid_cid_smiles`` rows their ``AID``/``SID`` reach."""
+    activities = _scan("pubchem_bioassay", "bioactivities")
+    two_target = activities.filter(AID=_PUBCHEM_TWO_TARGET_AID).collect()
+    sids = two_target["SID"].unique().sort().head(_PUBCHEM_TWO_TARGET_SIDS)
+    bioactivities = pl.concat(
+        [
+            activities.filter(AID=_PUBCHEM_ASSAY_AID).collect(),
+            two_target.filter(pl.col("SID").is_in(sids.implode())),
+            activities.filter(pl.col("AID").is_in(_PUBCHEM_EXCLUDED_AIDS))
+            .group_by("AID", maintain_order=True)
+            .head(1)
+            .collect(),
+        ]
+    )
+    aids = pl.Series([_PUBCHEM_ASSAY_AID, _PUBCHEM_TWO_TARGET_AID])
+    aids = pl.concat([aids, pl.Series(_PUBCHEM_EXCLUDED_AIDS)])
+    return {
+        "bioactivities": bioactivities,
+        "bioassays": _rows_with(
+            _scan("pubchem_bioassay", "bioassays"), "AID", aids
+        ).collect(),
+        "aid_target": _rows_with(
+            _scan("pubchem_bioassay", "aid_target"), "AID", aids
+        ).collect(),
+        "sid_cid_smiles": _rows_with(
+            _scan("pubchem_bioassay", "sid_cid_smiles"), "SID", bioactivities["SID"]
+        ).collect(),
+    }
+
+
+def pubchem_compound_slice() -> dict[str, pl.DataFrame]:
+    """``cid_smiles`` and ``cid_inchi_key`` rows of ``_PUBCHEM_SEED_CIDS``."""
+    return {
+        t: _scan("pubchem_compound", t)
+        .filter(pl.col("CID").is_in(_PUBCHEM_SEED_CIDS))
+        .collect()
+        for t in ("cid_smiles", "cid_inchi_key")
+    }
+
+
+_SLICES = {
+    "chembl": (chembl, chembl_slice),
+    "papyrus": (papyrus, papyrus_slice),
+    "toxcast": (toxcast, toxcast_slice),
+    "pubchem_bioassay": (pubchem_bioassay, pubchem_bioassay_slice),
+    "pubchem_compound": (pubchem_compound, pubchem_compound_slice),
+}
+
+
+def write_all(datasets: tuple[str, ...] = tuple(_SLICES)) -> None:
+    """Write each dataset's slice to ``OUT/<dataset>/<table>.parquet``, print row
+    counts and bytes, and collect every view built from the written files (fails
+    if one is unbuildable)."""
+    for dataset in datasets:
+        module, make_slices = _SLICES[dataset]
+        slices = make_slices()
         directory = OUT / dataset
         directory.mkdir(parents=True, exist_ok=True)
         for old in directory.glob("*.parquet"):
@@ -173,4 +248,4 @@ def write_all() -> None:
 
 
 if __name__ == "__main__":
-    write_all()
+    write_all(tuple(sys.argv[1:]) or tuple(_SLICES))
