@@ -14,6 +14,24 @@ _lg = lg.getLogger(__name__)
 _DISK_MARGIN = 0.1
 
 
+def check_disk_space(directory: Path, nbytes: int, what: str) -> None:
+    """Raise ``ENOSPC`` if ``nbytes`` do not fit on ``directory``'s disk; warn if
+    writing them leaves under ``_DISK_MARGIN`` of its capacity free."""
+    disk = shutil.disk_usage(directory)
+    if nbytes > disk.free:
+        raise OSError(
+            errno.ENOSPC,
+            f"{what} ({nbytes / 1e9:.1f} GB) does not fit in the "
+            f"{disk.free / 1e9:.1f} GB free on the disk of {directory}",
+        )
+    if disk.free - nbytes < _DISK_MARGIN * disk.total:
+        _lg.warning(
+            f"{what} ({nbytes / 1e9:.1f} GB) leaves "
+            f"{(disk.free - nbytes) / 1e9:.1f} GB free on the disk of {directory}, "
+            f"under {_DISK_MARGIN:.0%} of its capacity"
+        )
+
+
 def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
     """Downloads url to path if not already existing. Makes path dirs if not existing"""
     if isinstance(path, str):
@@ -31,19 +49,7 @@ def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
         total = int(total_hdr) if total_hdr and total_hdr.isdigit() else 0
         chunk_size = 8192
 
-        disk = shutil.disk_usage(path.parent)
-        if total > disk.free:
-            raise OSError(
-                errno.ENOSPC,
-                f"{url.split('/')[-1]} ({total / 1e9:.1f} GB) does not fit in the "
-                f"{disk.free / 1e9:.1f} GB free on the disk of {path.parent}",
-            )
-        if disk.free - total < _DISK_MARGIN * disk.total:
-            _lg.warning(
-                f"downloading {url.split('/')[-1]} ({total / 1e9:.1f} GB) leaves "
-                f"{(disk.free - total) / 1e9:.1f} GB free on the disk of {path.parent}, "
-                f"under {_DISK_MARGIN:.0%} of its capacity"
-            )
+        check_disk_space(path.parent, total, f"downloading {url.split('/')[-1]}")
 
         def _iter_resp():
             while True:
