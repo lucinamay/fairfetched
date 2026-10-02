@@ -198,6 +198,31 @@ class TestChemblVersions:
 #     assert isinstance(result["sql_db"], Path)
 
 
+class TestLocalVersions:
+    def test_lists_only_versions_with_parquet_tables(self, tmp_path):
+        for file in (
+            "37/parquet/a.parquet",
+            "37/parquet/b.parquet",
+            "35/parquet/a.parquet",
+            "36/raw/chembl_36.db",  # downloaded, never converted #TODO: consider
+            "34/parquet/a.parquet.part",  # conversion interrupted
+        ):
+            (tmp_path / file).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / file).touch()
+        assert Chembl.local_versions(tmp_path) == ("35", "37")
+
+    def test_empty_when_nothing_is_downloaded(self, tmp_path):
+        assert Papyrus.local_versions(tmp_path / "absent") == ()
+
+    def test_default_root_is_the_dataset_directory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("fairfetched.get.dataset.BASE_DIR", tmp_path)
+        (tmp_path / "papyrus" / "05.7" / "parquet").mkdir(parents=True)
+        (tmp_path / "papyrus" / "05.7" / "parquet" / "protein.parquet").touch()
+        (tmp_path / "chembl" / "37" / "parquet").mkdir(parents=True)
+        (tmp_path / "chembl" / "37" / "parquet" / "assays.parquet").touch()
+        assert Papyrus.local_versions() == ("05.7",)
+
+
 class TestPapyrusVersions:
     """Test Papyrus version handling."""
 

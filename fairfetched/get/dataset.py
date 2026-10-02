@@ -232,7 +232,15 @@ class _Base:
 
     @classmethod
     def available_versions(cls) -> tuple[str, ...]:
+        """Versions the source can provide."""
         return cls.module.available_versions()
+
+    @classmethod
+    def local_versions(cls, root_dir: Path | str | None = None) -> tuple[str, ...]:
+        """Versions with Parquet tables under ``root_dir`` (default
+        ``BASE_DIR/<dataset>``)."""
+        root = Path(root_dir or BASE_DIR / cls.module.__name__.split(".")[-1])
+        return tuple(sorted({p.parts[-3] for p in root.glob("*/parquet/*.parquet")}))
 
 
 @dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
