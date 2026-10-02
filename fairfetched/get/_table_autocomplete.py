@@ -132,3 +132,13 @@ class DrugbankTables:
     drug: LazyFrame = table("drug")
     drug_drug: LazyFrame = table("drug_drug")
     pathway: LazyFrame = table("pathway")
+
+class PubchemBioassayTables:
+    aid_target: LazyFrame = table("aid_target")
+    bioactivities: LazyFrame = table("bioactivities")
+    bioassays: LazyFrame = table("bioassays")
+    sid_cid_smiles: LazyFrame = table("sid_cid_smiles")
+
+class PubchemCompoundTables:
+    cid_inchi_key: LazyFrame = table("cid_inchi_key")
+    cid_smiles: LazyFrame = table("cid_smiles")

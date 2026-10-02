@@ -17,6 +17,8 @@ from fairfetched.get import (
     adrecs_target,
     chembl,
     papyrus,
+    pubchem_bioassay,
+    pubchem_compound,
     sider,
     toxcast,
 )
@@ -92,6 +94,8 @@ def tables_by_source() -> dict[str, list[str]]:
         "SiderTables": flat_file_tables(sider, drop=("readme",)),
         "ToxcastTables": flat_file_tables(toxcast, rename=toxcast._TABLE_NAME),
         "DrugbankTables": DRUGBANK_TABLES,
+        "PubchemBioassayTables": flat_file_tables(pubchem_bioassay),
+        "PubchemCompoundTables": flat_file_tables(pubchem_compound),
     }
 
 
