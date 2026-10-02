@@ -1,5 +1,6 @@
 """Tests for _ensure module, specifically ensure_url function."""
 
+import errno
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -117,9 +118,11 @@ def test_ensure_url_raises_on_http_error(temp_dir):
     mock_resp.__enter__ = Mock(side_effect=Exception("HTTP 404"))
     mock_resp.__exit__ = Mock(return_value=None)
 
-    with patch("urllib.request.urlopen", return_value=mock_resp):
-        with pytest.raises(Exception, match="HTTP 404"):
-            ensure_url("http://example.com/notfound.txt", target_path)
+    with (
+        patch("urllib.request.urlopen", return_value=mock_resp),
+        pytest.raises(Exception, match="HTTP 404"),
+    ):
+        ensure_url("http://example.com/notfound.txt", target_path)
 
 
 def test_ensure_url_with_string_path(temp_dir):
@@ -139,6 +142,44 @@ def test_ensure_url_with_string_path(temp_dir):
     # Verify it works with string paths
     assert Path(result).exists()
     assert Path(result).read_bytes() == test_content
+
+
+class TestDiskSpace:
+    """A 100 B disk with a 10 B margin, and a 20 B download."""
+
+    @staticmethod
+    def _download(temp_dir, free: int):
+        mock_resp = Mock()
+        mock_resp.read = Mock(side_effect=[b"x" * 20, b""])
+        mock_resp.getheader = Mock(return_value="20")
+        mock_resp.__enter__ = Mock(return_value=mock_resp)
+        mock_resp.__exit__ = Mock(return_value=None)
+        usage = Mock(total=100, free=free)
+        with (
+            patch("urllib.request.urlopen", return_value=mock_resp),
+            patch("fairfetched.utils.ensure.shutil.disk_usage", return_value=usage),
+        ):
+            return ensure_url("http://example.com/f.bin", temp_dir / "f.bin")
+
+    def test_warns_when_under_margin_after_download(self, temp_dir, caplog):
+        with caplog.at_level("WARNING", logger="fairfetched.utils.ensure"):
+            path = self._download(temp_dir, free=29)  # 9 B left
+        assert "leaves" in caplog.text
+        assert path.exists()  # a warning, not a refusal
+
+    def test_silent_when_margin_is_kept(self, temp_dir, caplog):
+        with caplog.at_level("WARNING", logger="fairfetched.utils.ensure"):
+            self._download(temp_dir, free=30)  # 10 B left
+        assert caplog.text == ""
+
+    def test_downloads_when_it_fits_exactly(self, temp_dir):
+        assert self._download(temp_dir, free=20).exists()  # 0 B left
+
+    def test_raises_when_download_does_not_fit(self, temp_dir):
+        with pytest.raises(OSError, match="does not fit") as exc:
+            self._download(temp_dir, free=19)  # 1 B short
+        assert exc.value.errno == errno.ENOSPC
+        assert list(temp_dir.iterdir()) == []  # nothing written
 
 
 def test_ensure_url_binary_file(temp_dir):
