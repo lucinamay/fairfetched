@@ -1,7 +1,4 @@
-"""PubChem BioAssay source: the bulk assay, bioactivity and target tables.
-
-The version is the ``Last-Modified`` date of ``bioactivities.tsv.gz``
-(``"20260929"``); see :mod:`fairfetched.get._pubchem`.
+"""PubChem BioAssay: rolling latest bulk assay, activity and target tables.
 
 ``view.bioactivity`` leaves out the assays deposited by ``EXCLUDED_SOURCES``
 (ChEMBL and the ToxCast/Tox21 programme), which fairfetched serves from their
@@ -106,13 +103,8 @@ _STRING_LISTS = ("bioassay_types", "protein_accessions", "uniprot_ids")
 _INTEGER_LISTS = ("gene_ids", "target_taxids", "taxonomy_ids", "cell_ids")
 
 
-def latest() -> str:
-    return _pubchem.snapshot_date(_URLS["bioactivities"])
-
-
-def available_versions() -> tuple[str, ...]:
-    """Upstream serves the current build only."""
-    return (latest(),)
+latest = partial(_pubchem.snapshot_date, _URLS["bioactivities"])
+available_versions = partial(_pubchem.available_versions, _URLS["bioactivities"])
 
 
 def source_urls(version: str) -> dict[str, str]:
@@ -120,21 +112,13 @@ def source_urls(version: str) -> dict[str, str]:
     return _URLS
 
 
-def ensure_raw_files(
-    version: str,
-    raw_dir: Path | str | None = None,
-    force: bool = False,
-) -> dict[str, Path]:
-    """Download the snapshot, or reopen it if complete on disk
-    (:func:`_pubchem.ensure_snapshot`)."""
-    return _pubchem.ensure_snapshot(
-        str(version),
-        _URLS["bioactivities"],
-        _URLS,
-        _MD5_URLS,
-        Path(raw_dir or PUBCHEM_BIOASSAY_DIR / str(version) / "raw"),
-        force=force,
-    )
+ensure_raw_files = partial(
+    _pubchem.ensure_snapshot,
+    version_url=_URLS["bioactivities"],
+    urls=_URLS,
+    md5_urls=_MD5_URLS,
+    root_dir=PUBCHEM_BIOASSAY_DIR,
+)
 
 
 ensure_parquet_tables = partial(

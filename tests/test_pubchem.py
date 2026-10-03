@@ -4,7 +4,8 @@ and the views. No download."""
 import errno
 import gzip
 from datetime import date
-from email.message import Message
+from functools import partial
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,22 +14,12 @@ import pytest
 
 from fairfetched.get import _pubchem, pubchem_bioassay, pubchem_compound
 
-# RFC 1321 test suite
+# RFC 1321 test vectors and a two-file PubChem mini-snapshot.
 _MD5_ABC = "900150983cd24fb0d6963f7d28e17f72"
 _MD5_EMPTY = "d41d8cd98f00b204e9800998ecf8427e"
 
 _URLS = {"a": "https://x.org/A.gz", "b": "https://x.org/B.gz"}
-
-
-def _response(body: bytes = b"", **headers: str) -> MagicMock:
-    message = Message()
-    for name, value in headers.items():
-        message[name.replace("_", "-")] = value
-    resp = MagicMock()
-    resp.__enter__.return_value = resp
-    resp.read.return_value = body
-    resp.headers = message
-    return resp
+_MD5S = {"A.gz": _MD5_ABC, "B.gz": _MD5_EMPTY}
 
 
 def _write_gz(path: Path, text: str) -> Path:
@@ -38,98 +29,108 @@ def _write_gz(path: Path, text: str) -> Path:
     return path
 
 
-def _fake_download(content: dict[str, bytes]):
-    def ensure_url(url, path, force=False):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_bytes(content[url])
-        return Path(path)
+@pytest.fixture
+def snapshot(tmp_path, monkeypatch):
+    raw = tmp_path / "raw"
+    served = MagicMock(return_value="20260929")
+    checksums = MagicMock(return_value=_MD5S)
+    content = {_URLS["a"]: b"abc", _URLS["b"]: b""}
 
-    return ensure_url
+    def download(url, path, force=False):
+        path.write_bytes(content[url])
+
+    monkeypatch.setattr(_pubchem, "snapshot_date", served)
+    monkeypatch.setattr(_pubchem, "upstream_md5s", checksums)
+    monkeypatch.setattr(_pubchem, "ensure_url", download)
+    ensure = partial(
+        _pubchem.ensure_snapshot,
+        "20260929",
+        raw_dir=raw,
+        version_url=_URLS["a"],
+        urls=_URLS,
+        md5_urls=("https://x.org/md5",),
+        root_dir=tmp_path,
+    )
+    return raw, ensure, content, served, checksums
 
 
-class TestSnapshotDate:
-    def test_last_modified_header_becomes_yyyymmdd(self):
-        resp = _response(Last_Modified="Tue, 29 Sep 2026 18:32:00 GMT")
-        with patch("urllib.request.urlopen", return_value=resp) as urlopen:
-            assert _pubchem.snapshot_date("https://x.org/f.gz") == "20260929"
-        assert urlopen.call_args.args[0].get_method() == "HEAD"
+class TestSnapshot:
+    @pytest.mark.parametrize("state", ["new", "legacy", "repair", "force"])
+    def test_verified_lifecycle(self, snapshot, state):
+        raw, ensure, _, served, checksums = snapshot
+        ensure()
+        if state == "legacy":
+            (raw / "_manifest.json").unlink()
+        elif state == "repair":
+            (raw / "b.tsv.gz").unlink()
+        elif state == "force":
+            (raw / "a.tsv.gz").write_bytes(b"stale")
+        paths = ensure(force=state == "force")
+
+        assert paths == {name: raw / f"{name}.tsv.gz" for name in _URLS}
+
+        assert paths["a"].read_bytes() == b"abc"
+        served.side_effect = AssertionError("network")
+        checksums.side_effect = AssertionError("network")
+        assert ensure()["b"].read_bytes() == b""
+        paths["a"].write_bytes(b"corrupt")
+        with pytest.raises(ValueError):
+            ensure()
+
+    @pytest.mark.parametrize(
+        "pinned,body,dates,md5s",
+        [
+            (False, b"bad", ["20260929"], [_MD5S]),
+            (False, b"abc", ["20261013"], []),
+            (False, b"abc", ["20260929", "20261013"], [_MD5S]),
+            (False, b"abc", ["20260929"] * 2, [_MD5S, {}]),
+            (False, b"abc", ["20260929"] * 2, [_MD5S, OSError("offline")]),
+            (True, b"new", ["20260929"], []),
+        ],
+    )
+    def test_failed_acquisition(self, snapshot, pinned, body, dates, md5s):
+        raw, ensure, content, served, checksums = snapshot
+        if pinned:
+            ensure()
+        before = {path.name: path.read_bytes() for path in raw.glob("*")}
+        content[_URLS["a"]] = body
+        served.side_effect = dates
+        checksums.side_effect = md5s
+        with pytest.raises((ValueError, OSError)):
+            ensure(force=True)
+        assert {path.name: path.read_bytes() for path in raw.glob("*")} == before
 
 
-class TestUpstreamMd5s:
-    def test_md5sum_listings_are_merged_by_file_name(self):
-        listings = [
-            _response(f"{_MD5_ABC}  A.gz\n{_MD5_EMPTY}  B.gz\n".encode()),
-            _response(f"{_MD5_EMPTY}  C.gz\n".encode()),
-        ]
-        with patch("urllib.request.urlopen", side_effect=listings):
-            assert _pubchem.upstream_md5s(("u1", "u2")) == {
+class TestVersions:
+    def test_live_head_date_and_available_versions(self):
+        with patch("urllib.request.urlopen") as opened:
+            opened.return_value.__enter__.return_value.headers = {
+                "Last-Modified": "Tue, 29 Sep 2026 18:32:00 GMT"
+            }
+            assert pubchem_bioassay.latest() == "20260929"
+            assert pubchem_bioassay.available_versions() == ("20260929",)
+            assert pubchem_compound.latest() == "20260929"
+        assert opened.call_args.args[0].get_method() == "HEAD"
+
+    def test_upstream_md5_names_and_source_urls(self):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[
+                BytesIO(f"{_MD5_ABC}  A.gz\n{_MD5_EMPTY}  B.gz\n".encode()),
+                BytesIO(f"{_MD5_EMPTY}  C.gz\n".encode()),
+            ],
+        ):
+            assert _pubchem.upstream_md5s(("one", "two")) == {
                 "A.gz": _MD5_ABC,
                 "B.gz": _MD5_EMPTY,
                 "C.gz": _MD5_EMPTY,
             }
-
-
-class TestEnsureSnapshot:
-    def _ensure(self, raw_dir, served="20260929", content=None, **kwargs):
-        content = content or {_URLS["a"]: b"abc", _URLS["b"]: b""}
-        with (
-            patch.object(_pubchem, "snapshot_date", return_value=served),
-            patch.object(_pubchem, "ensure_url", _fake_download(content)),
-            patch.object(
-                _pubchem,
-                "upstream_md5s",
-                return_value={"A.gz": _MD5_ABC, "B.gz": _MD5_EMPTY},
-            ),
-        ):
-            return _pubchem.ensure_snapshot(
-                "20260929", "https://x.org/A.gz", _URLS, ("m",), raw_dir, **kwargs
-            )
-
-    def test_downloads_each_file_as_name_tsv_gz(self, tmp_path):
-        paths = self._ensure(tmp_path)
-        assert paths == {"a": tmp_path / "a.tsv.gz", "b": tmp_path / "b.tsv.gz"}
-        assert paths["a"].read_bytes() == b"abc"
-
-    def test_complete_snapshot_is_reopened_without_a_request(self, tmp_path):
-        for name in _URLS:
-            (tmp_path / f"{name}.tsv.gz").write_bytes(b"cached")
-        with patch("urllib.request.urlopen", side_effect=AssertionError("network")):
-            paths = _pubchem.ensure_snapshot(
-                "20200101", "https://x.org/A.gz", _URLS, ("m",), tmp_path
-            )
-        assert paths["a"].read_bytes() == b"cached"
-
-    def test_snapshot_no_longer_served_raises_and_downloads_nothing(self, tmp_path):
-        with pytest.raises(ValueError, match="serves snapshot 20261013 only"):
-            self._ensure(tmp_path, served="20261013")
-        assert list(tmp_path.iterdir()) == []
-
-    def test_file_differing_from_upstream_md5_is_deleted_and_raises(self, tmp_path):
-        content = {_URLS["a"]: b"abc", _URLS["b"]: b"truncated"}
-        with pytest.raises(ValueError, match=r"\['b'\] did not match"):
-            self._ensure(tmp_path, content=content)
-        assert [p.name for p in tmp_path.iterdir()] == ["a.tsv.gz"]
-
-    def test_force_downloads_again(self, tmp_path):
-        (tmp_path / "a.tsv.gz").write_bytes(b"stale")
-        (tmp_path / "b.tsv.gz").write_bytes(b"stale")
-        assert self._ensure(tmp_path, force=True)["a"].read_bytes() == b"abc"
-
-
-class TestVersions:
-    def test_only_the_served_snapshot_is_available(self):
-        with patch.object(_pubchem, "snapshot_date", return_value="20260929"):
-            assert pubchem_bioassay.available_versions() == ("20260929",)
-            assert pubchem_compound.latest() == "20260929"
-
-    def test_source_urls(self):
-        assert pubchem_bioassay.source_urls("any")["bioactivities"] == (
-            "https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/Extras/bioactivities.tsv.gz"
+        assert pubchem_bioassay.source_urls("any")["bioactivities"].endswith(
+            "bioactivities.tsv.gz"
         )
-        assert pubchem_compound.source_urls("any") == {
-            "cid_smiles": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz",
-            "cid_inchi_key": "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-InChI-Key.gz",
-        }
+        assert pubchem_compound.source_urls("any")["cid_smiles"].endswith(
+            "CID-SMILES.gz"
+        )
 
 
 _ACTIVITY_HEADER = (

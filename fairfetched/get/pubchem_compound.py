@@ -1,8 +1,7 @@
-"""PubChem Compound source: SMILES, InChI and InChIKey for every CID.
+"""PubChem Compound: rolling latest structures for every CID.
 
-For joining structures onto sources that carry a PubChem CID (SIDER,
-:mod:`fairfetched.get.pubchem_bioassay`). The version is the ``Last-Modified``
-date of ``CID-SMILES.gz`` (``"20260927"``); see :mod:`fairfetched.get._pubchem`.
+Join structures onto sources that carry a PubChem CID (SIDER,
+:mod:`fairfetched.get.pubchem_bioassay`).
 """
 
 from functools import partial
@@ -33,13 +32,8 @@ _SCHEMAS: dict[str, dict[str, type[pl.DataType]]] = {
 _RENAMES = {"CID": "cid", "SMILES": "smiles", "InChI": "inchi", "InChI Key": "inchikey"}
 
 
-def latest() -> str:
-    return _pubchem.snapshot_date(_URLS["cid_smiles"])
-
-
-def available_versions() -> tuple[str, ...]:
-    """Upstream serves the current build only."""
-    return (latest(),)
+latest = partial(_pubchem.snapshot_date, _URLS["cid_smiles"])
+available_versions = partial(_pubchem.available_versions, _URLS["cid_smiles"])
 
 
 def source_urls(version: str) -> dict[str, str]:
@@ -47,21 +41,13 @@ def source_urls(version: str) -> dict[str, str]:
     return _URLS
 
 
-def ensure_raw_files(
-    version: str,
-    raw_dir: Path | str | None = None,
-    force: bool = False,
-) -> dict[str, Path]:
-    """Download the snapshot, or reopen it if complete on disk
-    (:func:`_pubchem.ensure_snapshot`)."""
-    return _pubchem.ensure_snapshot(
-        str(version),
-        _URLS["cid_smiles"],
-        _URLS,
-        _MD5_URLS,
-        Path(raw_dir or PUBCHEM_COMPOUND_DIR / str(version) / "raw"),
-        force=force,
-    )
+ensure_raw_files = partial(
+    _pubchem.ensure_snapshot,
+    version_url=_URLS["cid_smiles"],
+    urls=_URLS,
+    md5_urls=_MD5_URLS,
+    root_dir=PUBCHEM_COMPOUND_DIR,
+)
 
 
 ensure_parquet_tables = partial(
