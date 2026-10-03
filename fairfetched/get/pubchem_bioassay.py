@@ -6,6 +6,7 @@ own sources. The raw tables keep every depositor. Structures cover the tested
 substances only; :mod:`fairfetched.get.pubchem_compound` has every compound.
 """
 
+import gzip
 from functools import partial
 from pathlib import Path
 
@@ -121,9 +122,25 @@ ensure_raw_files = partial(
 )
 
 
+def _scan_checked_header(name: str, path: Path, **kwargs) -> pl.LazyFrame:
+    # A full Polars schema is positional; reject renamed or reordered columns.
+    with (gzip.open if path.suffix == ".gz" else open)(path, "rt") as fh:
+        found = fh.readline().rstrip("\n").split("\t")
+    expected = list(kwargs["schema"])
+    if found != expected:
+        raise ValueError(
+            f"{path.name}: upstream columns changed. Expected {expected}, found {found}"
+        )
+    return raw.scan_raw(path, **kwargs)
+
+
 ensure_parquet_tables = partial(
-    _pubchem.ensure_parquet_tables,
-    schemas=_SCHEMAS,
+    raw.ensure_parquet_tables,
+    scan_kwargs={
+        name: {"schema": schema, "quote_char": None, "separator": "\t"}
+        for name, schema in _SCHEMAS.items()
+    },
+    scanner=_scan_checked_header,
     decompress_first=_DECOMPRESS_FIRST,
 )
 

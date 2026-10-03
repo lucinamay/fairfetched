@@ -1,6 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Self
 
 from polars import LazyFrame
 
@@ -268,6 +270,27 @@ class _Base:
         return cls.module.available_versions()
 
     @classmethod
+    def _from_download_version(
+        cls,
+        version: str,
+        root_dir: Path | str,
+        force: bool,
+        ensure_raw_files: Callable[[str, Path, bool], dict[str, Path]],
+    ) -> Self:
+        dir = Path(root_dir) / str(version)
+        raw_paths = ensure_raw_files(str(version), dir / "raw", force)
+        parquet_paths = cls.module.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
     def local_versions(cls, root_dir: Path | str | None = None) -> tuple[str, ...]:
         """Versions with Parquet tables under ``root_dir`` (default
         ``BASE_DIR/<dataset>``)."""
@@ -333,22 +356,8 @@ class Chembl(_Base):
         force: bool = False,
     ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
-        version = chembl._format_version(version)
-        dir = Path(root_dir) / version
-
-        raw_paths: dict[str, Path] = chembl.ensure_raw_files(
-            version, raw_dir=dir / "raw", force=force
-        )
-
-        parquet_paths = chembl.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return Chembl(
-            version=version,
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            chembl._format_version(version), root_dir, force, chembl.ensure_raw_files
         )
 
     @classmethod
@@ -468,19 +477,8 @@ class Adrecs(_Base):
         root_dir: Path | str = f"{BASE_DIR}/adrecs",
         force: bool = False,
     ) -> "Adrecs":
-        dir = Path(root_dir) / str(version)
-        raw_paths = adrecs.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = adrecs.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, adrecs.ensure_raw_files
         )
 
     @classmethod
@@ -522,19 +520,8 @@ class AdrecsTarget(_Base):
         root_dir: Path | str = f"{BASE_DIR}/adrecs_target",
         force: bool = False,
     ) -> "AdrecsTarget":
-        dir = Path(root_dir) / str(version)
-        raw_paths = adrecs_target.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = adrecs_target.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, adrecs_target.ensure_raw_files
         )
 
     @classmethod
@@ -579,19 +566,8 @@ class Sider(_Base):
         root_dir: Path | str = f"{BASE_DIR}/sider",
         force: bool = False,
     ) -> "Sider":
-        dir = Path(root_dir) / str(version)
-        raw_paths = sider.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = sider.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, sider.ensure_raw_files
         )
 
     @classmethod
@@ -660,19 +636,8 @@ class Toxcast(_Base):
         root_dir: Path | str = f"{BASE_DIR}/toxcast",
         force: bool = False,
     ) -> "Toxcast":
-        dir = Path(root_dir) / str(version)
-        raw_paths = toxcast.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = toxcast.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, toxcast.ensure_raw_files
         )
 
     @classmethod
@@ -820,19 +785,8 @@ class PubchemBioassay(_Base):
         root_dir: Path | str = f"{BASE_DIR}/pubchem_bioassay",
         force: bool = False,
     ) -> "PubchemBioassay":
-        dir = Path(root_dir) / str(version)
-        raw_paths = pubchem_bioassay.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = pubchem_bioassay.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, pubchem_bioassay.ensure_raw_files
         )
 
     @classmethod
@@ -900,19 +854,8 @@ class PubchemCompound(_Base):
         root_dir: Path | str = f"{BASE_DIR}/pubchem_compound",
         force: bool = False,
     ) -> "PubchemCompound":
-        dir = Path(root_dir) / str(version)
-        raw_paths = pubchem_compound.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = pubchem_compound.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, pubchem_compound.ensure_raw_files
         )
 
     @classmethod

@@ -1,24 +1,28 @@
 """Shared raw-file -> Parquet consolidation for the flat-file sources."""
 
+import gzip
 import logging as lg
 import lzma
 import shutil
+import tempfile
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 
 import polars as pl
+
+from fairfetched.utils.ensure import check_disk_space
 
 _lg = lg.getLogger(__name__)
 
 _SEPARATORS = {".tsv": "\t", ".txt": "\t", ".csv": ","}
 
 
-def decompress_xz(path: Path) -> Path:
-    """Decompress ``<name>.xz`` to ``<name>`` beside the archive, overwriting any
-    leftover from an interrupted run. polars cannot stream a compressed ``.xz``
-    without buffering it whole; the caller removes the file after the sink."""
-    out = path.with_suffix("")
-    with lzma.open(path, "rb") as f_in, out.open("wb") as f_out:
+def _decompress(path: Path, out: Path) -> Path:
+    with (
+        (gzip.open if path.suffix == ".gz" else lzma.open)(path, "rb") as f_in,
+        out.open("wb") as f_out,
+    ):
         shutil.copyfileobj(f_in, f_out)
     return out
 
@@ -30,16 +34,18 @@ def scan_raw(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
     directly. The inner suffix picks the reader: ``.tsv``/``.txt`` (tab) and
     ``.csv`` (comma) via ``scan_csv``, ``.xlsx`` via ``read_excel`` (not
     streamable, for metadata-sized files).
-    ``scan_kwargs`` go to that reader and override the inferred separator.
+    An explicit ``separator`` also selects ``scan_csv`` for unrecognized suffixes;
+    other ``scan_kwargs`` go to the selected reader.
     """
     path = Path(path)
     if path.suffix == ".xz":
-        return scan_raw(decompress_xz(path), **scan_kwargs)
+        return scan_raw(_decompress(path, path.with_suffix("")), **scan_kwargs)
     inner = (Path(path.stem) if path.suffix == ".gz" else path).suffix.lower()
     if inner == ".xlsx":
         return pl.read_excel(path, **scan_kwargs).lazy()
-    if inner in _SEPARATORS:
-        scan_kwargs.setdefault("separator", _SEPARATORS[inner])
+    if inner in _SEPARATORS or "separator" in scan_kwargs:
+        if inner in _SEPARATORS:
+            scan_kwargs.setdefault("separator", _SEPARATORS[inner])
         scan_kwargs.setdefault("infer_schema_length", 10_000)
         return pl.scan_csv(path, **scan_kwargs)
     raise ValueError(f"cannot infer how to read {path.name!r}")
@@ -49,23 +55,28 @@ def ensure_parquet_tables(
     raw_paths: dict[str, Path],
     table_dir: Path | str | None = None,
     scan_kwargs: dict[str, dict] | None = None,
-    scanner: Callable[[str, Path], pl.LazyFrame] | None = None,
+    scanner: Callable[..., pl.LazyFrame] | None = None,
     table_names: dict[str, str] | None = None,
+    decompress_first: dict[str, float] | None = None,
 ) -> dict[str, Path]:
     """Stream each raw file into ``<table_dir>/<table>.parquet``, untouched; skip
     tables that exist and the ``readme`` entry. A table is written to ``.part`` and renamed, so an
     interrupted run leaves no partial table.
 
-    ``scan_kwargs`` (per raw name) go to :func:`scan_raw`; ``scanner(name, path)``
-    replaces :func:`scan_raw` for sources that need more (zip members,
-    casts). ``table_names`` renames raw name -> table name. ``table_dir``
-    defaults to ``<raw dir>/../parquet``.
+    ``scan_kwargs`` (per raw name) go to :func:`scan_raw` or to
+    ``scanner(name, path, **kwargs)`` when supplied. ``scanner`` replaces
+    :func:`scan_raw` for sources needing extra checks or parsing.
+    ``decompress_first`` maps selected gzip tables to an estimated uncompressed
+    size / archive size; each is checked and staged in system temp for its sink.
+    ``table_names`` renames raw name -> table name. ``table_dir`` defaults to
+    ``<raw dir>/../parquet``.
     """
     table_dir = Path(
         table_dir or next(iter(raw_paths.values())).parent.parent / "parquet"
     )
     table_dir.mkdir(exist_ok=True, parents=True)
 
+    decompress_first = decompress_first or {}
     out: dict[str, Path] = {}
     for name, path_ in raw_paths.items():
         if name == "readme":
@@ -77,14 +88,26 @@ def ensure_parquet_tables(
         _lg.info(f"parsing {path_} -> {dest}")
         part = dest.with_name(dest.name + ".part")
         try:
-            lf = (
-                scanner(name, Path(path_))
-                if scanner
-                else scan_raw(path_, **(scan_kwargs or {}).get(name, {}))
-            )
-            lf.sink_parquet(part)
-            part.replace(dest)
+            with ExitStack() as stack:
+                path = Path(path_)
+                if name in decompress_first and path.suffix == ".gz":
+                    tmp = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+                    check_disk_space(
+                        tmp,
+                        int(path.stat().st_size * decompress_first[name]),
+                        f"decompressing {path.name}",
+                    )
+                    path = _decompress(path, tmp / path.with_suffix("").name)
+                kwargs = (scan_kwargs or {}).get(name, {})
+                lf = (
+                    scanner(name, path, **kwargs)
+                    if scanner
+                    else scan_raw(path, **kwargs)
+                )
+                lf.sink_parquet(part)
+                part.replace(dest)
         finally:
+            part.unlink(missing_ok=True)
             if Path(path_).suffix == ".xz":
                 Path(path_).with_suffix("").unlink(missing_ok=True)
     return out

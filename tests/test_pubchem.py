@@ -140,13 +140,30 @@ _ACTIVITY_HEADER = (
 
 
 class TestConsolidation:
-    def test_unescaped_double_quote_survives(self, tmp_path):
-        raw = _write_gz(
-            tmp_path / "raw" / "aid_target.tsv.gz",
-            'AID\tGeneid\tAccession\tUniProtKB_AC/ID\n1\t\t"odd\tP1\n',
+    @pytest.mark.parametrize("upstream_names", [False, True])
+    def test_small_gzip_tables_preserve_quotes_without_disk_check(
+        self, tmp_path, upstream_names
+    ):
+        target = (
+            "Aid2GeneidAccessionUniProt.gz" if upstream_names else "aid_target.tsv.gz"
         )
-        out = pubchem_bioassay.ensure_parquet_tables({"aid_target": raw})
+        raw = {
+            "aid_target": _write_gz(
+                tmp_path / "raw" / target,
+                'AID\tGeneid\tAccession\tUniProtKB_AC/ID\n1\t\t"odd\tP1\n',
+            ),
+            "sid_cid_smiles": _write_gz(
+                tmp_path / "raw" / "Sid2CidSMILES.gz",
+                "SID\tCID\tIsomeric SMILES\n1\t2\tCC\n",
+            ),
+        }
+        usage = MagicMock(total=10**12, free=0)
+        with patch("fairfetched.utils.ensure.shutil.disk_usage", return_value=usage):
+            out = pubchem_bioassay.ensure_parquet_tables(raw)
         assert pl.read_parquet(out["aid_target"])["Accession"].to_list() == ['"odd']
+        assert pl.read_parquet(out["sid_cid_smiles"])["Isomeric SMILES"].to_list() == [
+            "CC"
+        ]
 
     def test_types_come_from_the_schema_not_from_the_first_rows(self, tmp_path):
         rows = "1\t10\t1\t\tInactive\t\t\t\t\t\t\t\t\n" * 3
@@ -164,21 +181,27 @@ class TestConsolidation:
         assert table["Activity Value"].to_list() == [None, None, None, 0.5]
         assert table["Activity Name"].to_list() == [None, None, None, "IC50"]
 
-    def test_renamed_upstream_column_raises(self, tmp_path):
+    @pytest.mark.parametrize(
+        "filename", ["aid_target.tsv.gz", "Aid2GeneidAccessionUniProt.gz"]
+    )
+    def test_renamed_upstream_column_raises(self, tmp_path, filename):
         raw = _write_gz(
-            tmp_path / "raw" / "aid_target.tsv.gz",
+            tmp_path / "raw" / filename,
             "AID\tGeneID\tAccession\tUniProtKB_AC/ID\n1\t2\tA\tP1\n",
         )
         with pytest.raises(ValueError, match="upstream columns changed"):
             pubchem_bioassay.ensure_parquet_tables({"aid_target": raw})
 
-    def test_headerless_compound_files_take_schema_names(self, tmp_path):
+    @pytest.mark.parametrize("upstream_names", [False, True])
+    def test_headerless_compound_files_take_schema_names(
+        self, tmp_path, upstream_names
+    ):
+        smiles = "CID-SMILES.gz" if upstream_names else "cid_smiles.tsv.gz"
+        inchi = "CID-InChI-Key.gz" if upstream_names else "cid_inchi_key.tsv.gz"
         raw = {
-            "cid_smiles": _write_gz(
-                tmp_path / "raw" / "cid_smiles.tsv.gz", "1\tCC\n2\tC\n"
-            ),
+            "cid_smiles": _write_gz(tmp_path / "raw" / smiles, "1\tCC\n2\tC\n"),
             "cid_inchi_key": _write_gz(
-                tmp_path / "raw" / "cid_inchi_key.tsv.gz",
+                tmp_path / "raw" / inchi,
                 "1\tInChI=1S/C2H6/c1-2/h1-2H3\tOTMSDBZUPAUEDD-UHFFFAOYSA-N\n",
             ),
         }
@@ -193,52 +216,34 @@ class TestConsolidation:
             "InChI Key",
         ]
 
-    def test_decompressed_copy_is_removed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "tmp"))
-        (tmp_path / "tmp").mkdir()
-        raw = _write_gz(tmp_path / "raw" / "cid_smiles.tsv.gz", "1\tCC\n")
-        pubchem_compound.ensure_parquet_tables({"cid_smiles": raw})
-        assert list((tmp_path / "tmp").iterdir()) == []
-
 
 class TestDecompressionDiskCheck:
     """``bioactivities`` is estimated at 5.9 times its ``.gz`` size."""
 
-    @staticmethod
-    def _convert(tmp_path, free_minus_estimate: int):
+    @pytest.mark.parametrize("free_minus_estimate", [-1, 0])
+    def test_decompression_disk_check(self, tmp_path, monkeypatch, free_minus_estimate):
         raw = _write_gz(
             tmp_path / "raw" / "bioactivities.tsv.gz",
             _ACTIVITY_HEADER + "1\t10\t1\t5\tActive\t\t\t\t\t\t\t\t\n" * 50,
         )
-        estimate = int(raw.stat().st_size * 5.9)
-        usage = MagicMock(total=10**12, free=estimate + free_minus_estimate)
-        with patch("fairfetched.utils.ensure.shutil.disk_usage", return_value=usage):
-            return pubchem_bioassay.ensure_parquet_tables({"bioactivities": raw})
-
-    def test_raises_before_decompressing_when_estimate_does_not_fit(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "tmp"))
-        (tmp_path / "tmp").mkdir()
-        with pytest.raises(OSError, match="decompressing bioactivities.tsv.gz") as exc:
-            self._convert(tmp_path, free_minus_estimate=-1)
-        assert exc.value.errno == errno.ENOSPC
-        assert list((tmp_path / "tmp").iterdir()) == []
-        assert list((tmp_path / "parquet").iterdir()) == []
-
-    def test_converts_when_estimate_fits_exactly(self, tmp_path):
-        out = self._convert(tmp_path, free_minus_estimate=0)
-        assert pl.read_parquet(out["bioactivities"]).height == 50
-
-    def test_table_read_from_gz_directly_is_not_checked(self, tmp_path):
-        raw = _write_gz(
-            tmp_path / "raw" / "aid_target.tsv.gz",
-            "AID\tGeneid\tAccession\tUniProtKB_AC/ID\n1\t2\tA\tP1\n",
+        temp = tmp_path / "tmp"
+        temp.mkdir()
+        monkeypatch.setattr("tempfile.tempdir", str(temp))
+        usage = MagicMock(
+            total=10**12, free=int(raw.stat().st_size * 5.9) + free_minus_estimate
         )
-        usage = MagicMock(total=10**12, free=0)
         with patch("fairfetched.utils.ensure.shutil.disk_usage", return_value=usage):
-            out = pubchem_bioassay.ensure_parquet_tables({"aid_target": raw})
-        assert pl.read_parquet(out["aid_target"]).height == 1
+            if free_minus_estimate < 0:
+                with pytest.raises(
+                    OSError, match="decompressing bioactivities.tsv.gz"
+                ) as exc:
+                    pubchem_bioassay.ensure_parquet_tables({"bioactivities": raw})
+                assert exc.value.errno == errno.ENOSPC
+                assert list((tmp_path / "parquet").iterdir()) == []
+            else:
+                out = pubchem_bioassay.ensure_parquet_tables({"bioactivities": raw})
+                assert pl.read_parquet(out["bioactivities"]).height == 50
+        assert list(temp.iterdir()) == []
 
 
 def _table(name: str, rows: list[dict], module=pubchem_bioassay) -> pl.DataFrame:

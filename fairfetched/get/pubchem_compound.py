@@ -51,9 +51,16 @@ ensure_raw_files = partial(
 
 
 ensure_parquet_tables = partial(
-    _pubchem.ensure_parquet_tables,
-    schemas=_SCHEMAS,
-    headerless=True,
+    raw.ensure_parquet_tables,
+    scan_kwargs={
+        name: {
+            "schema": schema,
+            "has_header": False,
+            "quote_char": None,
+            "separator": "\t",
+        }
+        for name, schema in _SCHEMAS.items()
+    },
     # uncompressed size as a multiple of the .gz size, snapshot 20260927:
     # 8.9 GB from 1.5 GB and 23.5 GB from 7.4 GB
     decompress_first={"cid_smiles": 6.0, "cid_inchi_key": 3.2},

@@ -13,30 +13,28 @@ _TSV = "a\tb\n1\tx\n2\ty\n"
 
 class TestScanTable:
     @pytest.mark.parametrize(
-        "name, body, sep",
+        "name,body,kwargs",
         [
-            ("t.tsv", _TSV, None),
-            ("t.txt", _TSV, None),
-            ("t.csv", "a,b\n1,x\n2,y\n", None),
+            ("t.tsv", _TSV, {}),
+            ("t.txt", _TSV, {}),
+            ("t.csv", "a,b\n1,x\n2,y\n", {}),
+            ("t.tsv.gz", _TSV, {}),
+            ("t.tsv.xz", _TSV, {}),
+            ("t.bin", _TSV, {"separator": "\t"}),
+            ("t.gz", _TSV, {"separator": "\t"}),
+            ("t", _TSV, {"separator": "\t"}),
         ],
     )
-    def test_separator_from_suffix(self, tmp_path, name, body, sep):
+    def test_scan_formats(self, tmp_path, name, body, kwargs):
         p = tmp_path / name
-        p.write_text(body)
-        assert raw_mod.scan_raw(p).collect().to_dict(as_series=False) == {
+        compress = {".gz": gzip.compress, ".xz": lzma.compress}.get(p.suffix)
+        p.write_bytes(compress(body.encode()) if compress else body.encode())
+        assert raw_mod.scan_raw(p, **kwargs).collect().to_dict(as_series=False) == {
             "a": [1, 2],
             "b": ["x", "y"],
         }
-
-    def test_gz(self, tmp_path):
-        p = tmp_path / "t.tsv.gz"
-        p.write_bytes(gzip.compress(_TSV.encode()))
-        assert raw_mod.scan_raw(p).collect().shape == (2, 2)
-
-    def test_xz_is_decompressed_beside_archive(self, tmp_path):
-        p = tmp_path / "t.tsv.xz"
-        p.write_bytes(lzma.compress(_TSV.encode()))
-        assert raw_mod.scan_raw(p).collect().shape == (2, 2)
+        if p.suffix == ".xz":
+            assert p.with_suffix("").read_text() == body
 
     def test_kwargs_override_inferred_separator(self, tmp_path):
         p = tmp_path / "t.txt"
@@ -62,24 +60,34 @@ class TestEnsureParquetTables:
         (d / "two.tsv").write_text(_TSV)
         return {"one": d / "one.tsv", "two": d / "two.tsv"}
 
-    def test_xz_decompressed_file_removed(self, tmp_path):
-        p = tmp_path / "raw" / "t.tsv.xz"
-        p.parent.mkdir()
-        p.write_bytes(lzma.compress(_TSV.encode()))
-        out = raw_mod.ensure_parquet_tables({"t": p})
-        assert pl.read_parquet(out["t"]).shape == (2, 2)
-        assert not p.with_suffix("").exists()
-
-    def test_xz_decompressed_file_removed_on_failure(self, tmp_path):
-        p = tmp_path / "raw" / "t.tsv.xz"
-        p.parent.mkdir()
-        p.write_bytes(lzma.compress(_TSV.encode()))
-        with pytest.raises(pl.exceptions.PolarsError):
-            raw_mod.ensure_parquet_tables(
-                {"t": p}, scan_kwargs={"t": {"schema": {"zz": pl.Int64}}}
-            )
-        assert not p.with_suffix("").exists()
-        assert not (tmp_path / "parquet" / "t.parquet").exists()
+    @pytest.mark.parametrize(
+        "suffix,compress", [("gz", gzip.compress), ("xz", lzma.compress)]
+    )
+    @pytest.mark.parametrize("failure", [False, True])
+    def test_decompression_cleanup_and_cache(
+        self, tmp_path, monkeypatch, suffix, compress, failure
+    ):
+        temp = tmp_path / "system_temp"
+        temp.mkdir()
+        monkeypatch.setattr("tempfile.tempdir", str(temp))
+        source = tmp_path / "raw" / f"t.tsv.{suffix}"
+        source.parent.mkdir()
+        source.write_bytes(compress(_TSV.encode()))
+        kwargs = {"t": {"schema": {"a": pl.Int64, "b": pl.Int64}}} if failure else None
+        convert = lambda: raw_mod.ensure_parquet_tables(
+            {"t": source}, scan_kwargs=kwargs, decompress_first={"t": 2.0}
+        )
+        if failure:
+            with pytest.raises(pl.exceptions.PolarsError):
+                convert()
+            assert not list((tmp_path / "parquet").iterdir())
+        else:
+            out = convert()
+            assert pl.read_parquet(out["t"]).shape == (2, 2)
+            source.write_bytes(b"invalid compressed data")
+            assert convert() == out
+        assert list(temp.iterdir()) == []
+        assert not source.with_suffix("").exists()
 
     def test_default_dir_names_and_values(self, raw, tmp_path):
         out = raw_mod.ensure_parquet_tables(raw, table_names={"two": "renamed"})
