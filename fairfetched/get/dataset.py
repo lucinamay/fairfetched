@@ -1,6 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Self
 
 from polars import LazyFrame
 
@@ -11,6 +13,8 @@ from fairfetched.get import (
     chembl,
     drugbank,
     papyrus,
+    pubchem_bioassay,
+    pubchem_compound,
     sider,
     toxcast,
 )
@@ -20,6 +24,8 @@ from fairfetched.get._table_autocomplete import (
     ChemblTables,
     DrugbankTables,
     PapyrusTables,
+    PubchemBioassayTables,
+    PubchemCompoundTables,
     SiderTables,
     ToxcastTables,
 )
@@ -141,6 +147,26 @@ class _DrugbankView(_View):
         return self._views["interactions"]
 
 
+class _PubchemBioassayView(_View):
+    @property
+    def assays(self) -> LazyFrame:
+        return self._views["assays"]
+
+    @property
+    def proteins(self) -> LazyFrame:
+        return self._views["proteins"]
+
+
+class _PubchemCompoundView(_View):
+    @property
+    def smiles(self) -> LazyFrame:
+        return self._views["smiles"]
+
+    @property
+    def inchi(self) -> LazyFrame:
+        return self._views["inchi"]
+
+
 class _SourceTables:
     """Source tables as attributes (``db.tables.drug``) and by key (``db.tables["drug"]``);
     the attributes come from fairfetched.get._table_autocomplete."""
@@ -190,6 +216,14 @@ class _DrugbankSourceTables(_SourceTables, DrugbankTables):
     pass
 
 
+class _PubchemBioassaySourceTables(_SourceTables, PubchemBioassayTables):
+    pass
+
+
+class _PubchemCompoundSourceTables(_SourceTables, PubchemCompoundTables):
+    pass
+
+
 @dataclass(frozen=True)
 class _Base:
     """lightweight wrapper serving as the main point for a united API per database"""
@@ -232,7 +266,36 @@ class _Base:
 
     @classmethod
     def available_versions(cls) -> tuple[str, ...]:
+        """Versions the source can provide."""
         return cls.module.available_versions()
+
+    @classmethod
+    def _from_download_version(
+        cls,
+        version: str,
+        root_dir: Path | str,
+        force: bool,
+        ensure_raw_files: Callable[[str, Path, bool], dict[str, Path]],
+    ) -> Self:
+        dir = Path(root_dir) / str(version)
+        raw_paths = ensure_raw_files(str(version), dir / "raw", force)
+        parquet_paths = cls.module.ensure_parquet_tables(
+            raw_paths, table_dir=dir / "parquet"
+        )
+        return cls(
+            version=str(version),
+            raw_paths=raw_paths,
+            parquet_paths=parquet_paths,
+            dir=dir,
+            module=cls.module,
+        )
+
+    @classmethod
+    def local_versions(cls, root_dir: Path | str | None = None) -> tuple[str, ...]:
+        """Versions with Parquet tables under ``root_dir`` (default
+        ``BASE_DIR/<dataset>``)."""
+        root = Path(root_dir or BASE_DIR / cls.module.__name__.split(".")[-1])
+        return tuple(sorted({p.parts[-3] for p in root.glob("*/parquet/*.parquet")}))
 
 
 @dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
@@ -293,22 +356,8 @@ class Chembl(_Base):
         force: bool = False,
     ) -> "Chembl":
         """Downloads Chembl for version if not yet present in the given cache directory"""
-        version = chembl._format_version(version)
-        dir = Path(root_dir) / version
-
-        raw_paths: dict[str, Path] = chembl.ensure_raw_files(
-            version, raw_dir=dir / "raw", force=force
-        )
-
-        parquet_paths = chembl.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return Chembl(
-            version=version,
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            chembl._format_version(version), root_dir, force, chembl.ensure_raw_files
         )
 
     @classmethod
@@ -428,19 +477,8 @@ class Adrecs(_Base):
         root_dir: Path | str = f"{BASE_DIR}/adrecs",
         force: bool = False,
     ) -> "Adrecs":
-        dir = Path(root_dir) / str(version)
-        raw_paths = adrecs.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = adrecs.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, adrecs.ensure_raw_files
         )
 
     @classmethod
@@ -482,19 +520,8 @@ class AdrecsTarget(_Base):
         root_dir: Path | str = f"{BASE_DIR}/adrecs_target",
         force: bool = False,
     ) -> "AdrecsTarget":
-        dir = Path(root_dir) / str(version)
-        raw_paths = adrecs_target.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = adrecs_target.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, adrecs_target.ensure_raw_files
         )
 
     @classmethod
@@ -539,19 +566,8 @@ class Sider(_Base):
         root_dir: Path | str = f"{BASE_DIR}/sider",
         force: bool = False,
     ) -> "Sider":
-        dir = Path(root_dir) / str(version)
-        raw_paths = sider.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = sider.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, sider.ensure_raw_files
         )
 
     @classmethod
@@ -620,19 +636,8 @@ class Toxcast(_Base):
         root_dir: Path | str = f"{BASE_DIR}/toxcast",
         force: bool = False,
     ) -> "Toxcast":
-        dir = Path(root_dir) / str(version)
-        raw_paths = toxcast.ensure_raw_files(
-            str(version), raw_dir=dir / "raw", force=force
-        )
-        parquet_paths = toxcast.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
-        )
-        return cls(
-            version=str(version),
-            raw_paths=raw_paths,
-            parquet_paths=parquet_paths,
-            dir=dir,
-            module=cls.module,
+        return cls._from_download_version(
+            version, root_dir, force, toxcast.ensure_raw_files
         )
 
     @classmethod
@@ -718,3 +723,145 @@ class Drugbank(_Base):
     ) -> "Drugbank":
         """Reload an already-registered version; raises if it was never registered."""
         return cls._build(str(version), root_dir)
+
+
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
+class PubchemBioassay(_Base):
+    """PubChem BioAssay wrapper: download once, then read lazily.
+
+    PubChem serves its current build only, so the version is that build's date
+    and ``from_version`` reopens a snapshot already on disk
+    (``PubchemBioassay.local_versions()``). A snapshot is 3.2 GB to download and
+    2.7 GB as Parquet; conversion needs 18 GB of temp space.
+
+    ``view.bioactivity`` and ``view.assays`` leave out the assays deposited by
+    ChEMBL and the ToxCast/Tox21 programme
+    (``pubchem_bioassay.EXCLUDED_SOURCES``); ``tables`` keeps them::
+
+        db = PubchemBioassay.from_latest()
+        db.view.bioactivity.drop_nulls("activity_value").sink_parquet("potencies.parquet")
+
+    ``PubchemBioassay.demo()`` returns a tiny offline sample with the same API:
+
+    >>> from fairfetched.get import PubchemBioassay
+    >>> db = PubchemBioassay.demo()
+    >>> db.view.assays.collect()["aid"].to_list()
+    [429, 1938]
+    >>> db.tables.bioassays.collect().height    # 5 more, from the excluded depositors
+    7
+    >>> ec50 = db.view.bioactivity.filter(aid=1938).collect()
+    >>> ec50["activity_name"].unique().to_list(), ec50["uniprot_ids"][0].to_list()
+    (['EC50'], ['P08485'])
+    >>> db.view.bioactivity.filter(aid=429).collect().shape   # 2 substances x 2 targets
+    (4, 18)
+    """
+
+    module: DatasetGetModule = pubchem_bioassay
+
+    @cached_property
+    def view(self) -> _PubchemBioassayView:
+        return _PubchemBioassayView(self)
+
+    @cached_property
+    def tables(self) -> _PubchemBioassaySourceTables:
+        return _PubchemBioassaySourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "PubchemBioassay":
+        """Tiny offline slice of the 20260929 snapshot (7 assays, 13
+        bioactivities). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.parquets("pubchem_bioassay"),
+            dir=_demo.DEMO_DIR / "pubchem_bioassay",
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str,
+        root_dir: Path | str = f"{BASE_DIR}/pubchem_bioassay",
+        force: bool = False,
+    ) -> "PubchemBioassay":
+        return cls._from_download_version(
+            version, root_dir, force, pubchem_bioassay.ensure_raw_files
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/pubchem_bioassay", force: bool = False
+    ) -> "PubchemBioassay":
+        return cls.from_version(
+            pubchem_bioassay.latest(), root_dir=root_dir, force=force
+        )
+
+
+@dataclass(frozen=True, repr=False, eq=False)  # eq=False keeps _Base.__hash__
+class PubchemCompound(_Base):
+    """PubChem Compound wrapper: SMILES, InChI and InChIKey for every CID.
+
+    Versioned by build date like :class:`PubchemBioassay`. A snapshot is 8.9 GB
+    to download and 8.4 GB as Parquet; conversion needs 24 GB of temp space.
+
+    ``view.smiles`` and ``view.inchi`` are separate on purpose: join each onto
+    the frame that needs structures (see ``pubchem_compound.build_views``)::
+
+        db = PubchemCompound.from_latest()
+        mine.join(db.view.smiles, on="cid", how="left").join(
+            db.view.inchi, on="cid", how="left"
+        )
+
+    ``PubchemCompound.demo()`` returns a tiny offline sample with the same API:
+
+    >>> from fairfetched.get import PubchemCompound
+    >>> db = PubchemCompound.demo()
+    >>> db.view.smiles.filter(cid=2244).collect()["smiles"].to_list()
+    ['CC(=O)OC1=CC=CC=C1C(=O)O']
+    >>> db.view.inchi.filter(cid=2244).collect()["inchikey"].to_list()
+    ['BSYNRYMUTXBXSQ-UHFFFAOYSA-N']
+    >>> db.view.smiles.collect().height, db.view.inchi.collect().height
+    (3, 2)
+    """
+
+    module: DatasetGetModule = pubchem_compound
+
+    @cached_property
+    def view(self) -> _PubchemCompoundView:
+        return _PubchemCompoundView(self)
+
+    @cached_property
+    def tables(self) -> _PubchemCompoundSourceTables:
+        return _PubchemCompoundSourceTables(self)
+
+    @classmethod
+    def demo(cls) -> "PubchemCompound":
+        """Tiny offline slice of the 20260927 snapshot (3 compounds, one without
+        an InChI row). See fairfetched.get._demo."""
+        return cls(
+            version="demo",
+            raw_paths={},
+            parquet_paths=_demo.parquets("pubchem_compound"),
+            dir=_demo.DEMO_DIR / "pubchem_compound",
+            module=cls.module,
+        )
+
+    @classmethod
+    def from_version(
+        cls,
+        version: str,
+        root_dir: Path | str = f"{BASE_DIR}/pubchem_compound",
+        force: bool = False,
+    ) -> "PubchemCompound":
+        return cls._from_download_version(
+            version, root_dir, force, pubchem_compound.ensure_raw_files
+        )
+
+    @classmethod
+    def from_latest(
+        cls, root_dir: Path | str = f"{BASE_DIR}/pubchem_compound", force: bool = False
+    ) -> "PubchemCompound":
+        return cls.from_version(
+            pubchem_compound.latest(), root_dir=root_dir, force=force
+        )

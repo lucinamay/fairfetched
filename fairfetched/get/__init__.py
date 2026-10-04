@@ -1,4 +1,14 @@
-from .dataset import Adrecs, AdrecsTarget, Chembl, Drugbank, Papyrus, Sider, Toxcast
+from .dataset import (
+    Adrecs,
+    AdrecsTarget,
+    Chembl,
+    Drugbank,
+    Papyrus,
+    PubchemBioassay,
+    PubchemCompound,
+    Sider,
+    Toxcast,
+)
 
 __all__ = [
     "Adrecs",
@@ -6,6 +16,8 @@ __all__ = [
     "Chembl",
     "Drugbank",
     "Papyrus",
+    "PubchemBioassay",
+    "PubchemCompound",
     "Sider",
     "Toxcast",
 ]

@@ -1,8 +1,14 @@
 import pytest
 
-from fairfetched.get.dataset import Chembl, Papyrus, Toxcast
+from fairfetched.get.dataset import (
+    Chembl,
+    Papyrus,
+    PubchemBioassay,
+    PubchemCompound,
+    Toxcast,
+)
 
-DEMOS = [Chembl, Papyrus, Toxcast]
+DEMOS = [Chembl, Papyrus, Toxcast, PubchemBioassay, PubchemCompound]
 
 
 @pytest.mark.parametrize("cls", DEMOS)

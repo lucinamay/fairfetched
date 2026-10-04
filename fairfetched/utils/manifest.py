@@ -1,17 +1,12 @@
-"""Content-hash pin for sources whose download URLs carry no version.
+"""Content-hash verification for committed, local, or in-memory manifests.
 
-ChEMBL and Papyrus pin a release through the version in their URL. A source
-that cannot -- SIDER serves whatever is current under a versionless URL --
-commits a manifest of sha256s in ``fairfetched/get/manifests/`` instead. :func:`verify` raises
-when a downloaded file no longer matches the committed hash; :func:`write`
-regenerates the manifest. DrugBank has different drift messages (because local pins)
+Committed manifests pin versionless sources; local manifests pin registered
+snapshots. In-memory manifests can verify upstream checksums before writing.
 
-A source module wires it in with two lines::
+Source modules verify downloads and publish pins with::
 
-    _MANIFEST_PATH = Path(__file__).parent / "manifests" / "<name>.json"
-    ...
-    manifest.verify(raw_paths, _MANIFEST_PATH)      # inside ensure_raw_files
-    manifest.write(raw_paths, _MANIFEST_PATH, version=version)  # by hand, then commit
+    manifest.verify(raw_paths, manifest_path)
+    manifest.write(raw_paths, manifest_path, version=version)
 """
 
 import hashlib
@@ -22,64 +17,70 @@ from pathlib import Path
 
 _lg = lg.getLogger(__name__)
 
-
 _DRIFT_MSG = (
     "upstream moved. Recheck every count derived from this source, then re-pin."
 )
 
 
-def sha256(path: Path | str) -> str:
-    """Chunked, so DrugBank's ~150 MB gzip does not land in memory whole."""
-    h = hashlib.sha256()
+def digest(path: Path | str, algorithm: str = "sha256") -> str:
+    """Return a streaming checksum; DrugBank's large gzip stays out of memory."""
     with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+        return hashlib.file_digest(fh, algorithm).hexdigest()
 
 
 def verify(
     raw_paths: dict[str, Path],
-    manifest_path: Path | str,
+    manifest_path: Path | str | dict,
     drift_hint: str = _DRIFT_MSG,
+    *,
+    strict: bool = False,
+    algorithm: str = "sha256",
+    **metadata: object,
 ) -> None:
-    """Raise unless every path in ``raw_paths`` that the manifest records still
-    matches its sha256.
+    """Check requested paths against a file-based or in-memory manifest.
 
-    A missing manifest is logged and skipped, so a source works before its pin
-    is committed; a drifted hash raises :class:`ValueError`. Paths absent from
-    the manifest are ignored, so a new file added to a source is not an error
-    until the manifest is regenerated.
-
-    ``drift_hint`` closes the drift message. DrugBank passes its own: its
-    manifest pins a local registered file, so "upstream moved" is the wrong
-    diagnosis and re-pinning the wrong fix.
+    Missing manifests and unrecorded paths remain permissive by default;
+    ``strict`` rejects either. Optional metadata must match the manifest.
     """
-    manifest_path = Path(manifest_path)
-    if not manifest_path.exists():
-        _lg.warning(
-            "%s absent; this source is unpinned. Regenerate it with the "
-            "module's manifest writer.",
-            manifest_path.name,
+    if isinstance(manifest_path, dict):
+        manifest = manifest_path
+        label = "in-memory manifest"
+    else:
+        manifest_path = Path(manifest_path)
+        label = manifest_path.name
+        if not manifest_path.exists():
+            if strict:
+                raise ValueError(f"Manifest {label} is absent")
+            _lg.warning(
+                "%s absent; this source is unpinned. Regenerate it with the "
+                "module's manifest writer.",
+                label,
+            )
+            return
+        manifest = json.loads(manifest_path.read_text())
+
+    if any(manifest.get(key) != value for key, value in metadata.items()):
+        raise ValueError(
+            f"Manifest {label} does not match requested metadata {metadata!r}"
         )
-        return
-    recorded = json.loads(manifest_path.read_text())["files"]
+    recorded = manifest["files"]
     drifted = sorted(
         name
         for name, path in raw_paths.items()
-        if name in recorded and sha256(path) != recorded[name]["sha256"]
+        if (strict or name in recorded)
+        and digest(path, algorithm) != recorded.get(name, {}).get(algorithm)
     )
     if drifted:
         raise ValueError(
             f"{len(drifted)} file(s) differ from the release pinned in "
-            f"{manifest_path.name} ({drifted}); {drift_hint}"
+            f"{label} ({drifted}); {drift_hint}"
         )
 
 
 def write(
     raw_paths: dict[str, Path], manifest_path: Path | str, **meta: object
 ) -> dict:
-    """Record ``raw_paths``' sizes and sha256s to ``manifest_path``. Run by
-    hand; commit the result. ``meta`` (e.g. ``version=...``) is stored verbatim."""
+    """Record sizes and SHA256s; commit the pin or store it with a snapshot."""
     manifest = {
         "written": date.today().isoformat(),  # noqa: DTZ011
         **meta,
@@ -87,7 +88,7 @@ def write(
             name: {
                 "filename": Path(path).name,
                 "bytes": Path(path).stat().st_size,
-                "sha256": sha256(path),
+                "sha256": digest(path),
             }
             for name, path in raw_paths.items()
         },

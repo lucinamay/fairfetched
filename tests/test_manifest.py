@@ -1,4 +1,4 @@
-"""Content-hash pin: fairfetched.utils.manifest, reusable across sources."""
+"""Shared manifest verification for committed and in-memory pins."""
 
 import json
 
@@ -9,37 +9,45 @@ from fairfetched.utils import manifest
 
 @pytest.fixture
 def raw_paths(tmp_path):
-    paths = {}
-    for name, body in {"a": "alpha", "b": "beta"}.items():
-        paths[name] = tmp_path / f"{name}.txt"
-        paths[name].write_text(body)
-    return paths
+    path = tmp_path / "a.txt"
+    path.write_text("alpha")
+    return {"a": path}
 
 
-class TestWrite:
-    def test_records_hash_size_and_meta(self, tmp_path, raw_paths):
-        out = manifest.write(raw_paths, tmp_path / "m.json", version="9")
-        assert out["version"] == "9"
-        assert out["files"]["a"]["bytes"] == len("alpha")
-        assert out["files"]["a"]["sha256"] == manifest.sha256(raw_paths["a"])
-        assert json.loads((tmp_path / "m.json").read_text()) == out
+@pytest.mark.parametrize(
+    ("algorithm", "checksum"),
+    [
+        ("sha256", "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"),
+        ("md5", "2c1743a391305fbf367df8e4f069f9f9"),
+    ],
+)
+def test_in_memory_hash_and_drift(raw_paths, algorithm, checksum):
+    pin = {"files": {"a": {algorithm: checksum}}, "version": "1"}
+    manifest.verify(raw_paths, pin, strict=True, algorithm=algorithm, version="1")
+    raw_paths["a"].write_text("changed")
+    with pytest.raises(ValueError, match="1 file"):
+        manifest.verify(raw_paths, pin, strict=True, algorithm=algorithm)
 
 
-class TestVerify:
-    def test_passes_when_unchanged(self, tmp_path, raw_paths):
-        manifest.write(raw_paths, tmp_path / "m.json")
-        manifest.verify(raw_paths, tmp_path / "m.json")  # no raise
+def test_write_records_literal_sha256_and_metadata(tmp_path, raw_paths):
+    path = tmp_path / "m.json"
+    out = manifest.write(raw_paths, path, version="9")
+    assert out["files"]["a"]["sha256"] == (
+        "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8"
+    )
+    assert out["version"] == "9"
+    assert out["files"]["a"]["bytes"] == 5
+    assert json.loads(path.read_text()) == out
 
-    def test_raises_when_a_file_changed(self, tmp_path, raw_paths):
-        manifest.write(raw_paths, tmp_path / "m.json")
-        raw_paths["b"].write_text("BETA")
-        with pytest.raises(ValueError, match=r"1 file\(s\) differ"):
-            manifest.verify(raw_paths, tmp_path / "m.json")
 
-    def test_ignores_paths_not_in_the_manifest(self, tmp_path, raw_paths):
-        manifest.write({"a": raw_paths["a"]}, tmp_path / "m.json")
-        manifest.verify(raw_paths, tmp_path / "m.json")  # 'b' unrecorded, no raise
-
-    def test_missing_manifest_warns_and_skips(self, tmp_path, raw_paths, caplog):
-        manifest.verify(raw_paths, tmp_path / "absent.json")
-        assert "unpinned" in caplog.text
+def test_permissive_vs_strict(tmp_path, raw_paths, caplog):
+    manifest.verify(raw_paths, tmp_path / "absent.json")
+    assert "unpinned" in caplog.text
+    with pytest.raises(ValueError, match="absent"):
+        manifest.verify(raw_paths, tmp_path / "absent.json", strict=True)
+    pin = {"files": {}, "version": "1"}
+    manifest.verify(raw_paths, pin)
+    with pytest.raises(ValueError, match="1 file"):
+        manifest.verify(raw_paths, pin, strict=True)
+    with pytest.raises(ValueError, match="version"):
+        manifest.verify(raw_paths, pin, version="2")

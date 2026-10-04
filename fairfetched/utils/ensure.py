@@ -1,4 +1,6 @@
+import errno
 import logging as lg
+import shutil
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -7,6 +9,27 @@ from pathlib import Path
 from ._track import track
 
 _lg = lg.getLogger(__name__)
+
+# share of the disk that should stay free after a download, as in papyrus_scripts
+_DISK_MARGIN = 0.1
+
+
+def check_disk_space(directory: Path, nbytes: int, what: str) -> None:
+    """Raise ``ENOSPC`` if ``nbytes`` do not fit on ``directory``'s disk; warn if
+    writing them leaves under ``_DISK_MARGIN`` of its capacity free."""
+    disk = shutil.disk_usage(directory)
+    if nbytes > disk.free:
+        raise OSError(
+            errno.ENOSPC,
+            f"{what} ({nbytes / 1e9:.1f} GB) does not fit in the "
+            f"{disk.free / 1e9:.1f} GB free on the disk of {directory}",
+        )
+    if disk.free - nbytes < _DISK_MARGIN * disk.total:
+        _lg.warning(
+            f"{what} ({nbytes / 1e9:.1f} GB) leaves "
+            f"{(disk.free - nbytes) / 1e9:.1f} GB free on the disk of {directory}, "
+            f"under {_DISK_MARGIN:.0%} of its capacity"
+        )
 
 
 def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
@@ -25,6 +48,8 @@ def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
         total_hdr = resp.getheader("Content-Length")
         total = int(total_hdr) if total_hdr and total_hdr.isdigit() else 0
         chunk_size = 8192
+
+        check_disk_space(path.parent, total, f"downloading {url.split('/')[-1]}")
 
         def _iter_resp():
             while True:
