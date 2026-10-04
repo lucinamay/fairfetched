@@ -121,9 +121,9 @@ def ensure_sqlite_db_to_parquets(
         if path_out.exists() and not force:
             continue
         _lg.debug(f"starting extraction of {t}")
-        con.execute(
-            f"COPY (SELECT * FROM src.\"{t}\") TO '{path_out}' (FORMAT parquet)"
-        )
+        part = path_out.with_name(path_out.name + ".part")
+        con.execute(f"COPY (SELECT * FROM src.\"{t}\") TO '{part}' (FORMAT parquet)")
+        part.replace(path_out)  # an interrupted copy never leaves a table that looks complete
 
     con.close()
     return out

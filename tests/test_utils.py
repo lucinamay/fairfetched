@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tarfile
@@ -7,6 +8,7 @@ from unittest import mock
 
 import pytest
 
+from fairfetched.get import chembl
 from fairfetched.utils import _track as track_module
 from fairfetched.utils.files import ensure_untarred_sqlite as untar_sqlite
 from fairfetched.utils.storage import _get_fairfetched_home_dir
@@ -195,3 +197,43 @@ class TestTrack:
         assert out == [0, 1, 2]
         assert captured.out == ""
         assert captured.err == ""
+
+
+class TestChemblTablesManifest:
+    @pytest.fixture
+    def raw_paths(self, sample_sqlite_db, temp_dir):
+        archive = temp_dir / "sql_db.tar.gz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(sample_sqlite_db, arcname="chembl_test.db")
+        sample_sqlite_db.unlink()
+        return {"sql_db": archive}
+
+    def test_uncompressed_db_deleted_and_tables_listed(self, raw_paths, temp_dir):
+        out = chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")
+        assert list(out) == ["test_table"] and out["test_table"].is_file()
+        assert not (temp_dir / "chembl_test.db").exists()
+        pinned = json.loads((temp_dir / "pq" / "_tables.json").read_text())
+        assert pinned["tables"] == {"test_table": "test_table.parquet"}
+        assert list(pinned["files"]) == ["test_table.parquet"]
+
+    def test_reload_needs_neither_archive_nor_db(self, raw_paths, temp_dir):
+        first = chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")
+        raw_paths["sql_db"].write_bytes(b"not a tarball")
+        assert chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq") == first
+
+    def test_missing_table_is_rebuilt_from_archive(self, raw_paths, temp_dir):
+        out = chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")
+        out["test_table"].unlink()
+        assert chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")[
+            "test_table"
+        ].is_file()
+
+    def test_interrupted_run_writes_no_manifest(self, raw_paths, temp_dir):
+        with (
+            mock.patch.object(
+                chembl, "ensure_sqlite_db_to_parquets", side_effect=RuntimeError
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")
+        assert not (temp_dir / "pq" / "_tables.json").exists()

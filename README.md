@@ -28,7 +28,7 @@ mychembl.activities           # each raw source table is also an attribute (mych
 
 mychembl.parquet_paths   # the paths to the parquet-converted tabular data files in the Chembl .db file
 
-mychembl.raw_paths            # the paths to the raw chembl file as downloaded from Chembl. currently does include an uncompressed .db file
+mychembl.raw_paths            # the paths to the raw chembl file as downloaded from Chembl (the .tar.gz); the untarred .db is deleted once the parquet tables are written
 
 mychembl.view.compounds       # joined domain views live under .view (.view.bioactivity, .view.compounds, .view.proteins, .view.components);
                               # each is a LazyFrame join over mychembl.lfs giving an intuitive, flat shape of the data
@@ -120,7 +120,7 @@ mychembl.lfs["activities"].collect().to_pandas()
     - [x] database to tables (parquet)
     - [ ] intuitive pre-merged flat files
     - [ ] database visualisation
-    - [ ] remove the need for storing uncompressed .db
+    - [x] remove the need for storing uncompressed .db (`_tables.json` lists the finished tables)
 - [ ] reproducion from downloaded raw file
 - [ ] reproducible molecular (and protein?) standardisation
 - [ ] automated time-url logging and manifest files

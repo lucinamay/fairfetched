@@ -1,6 +1,7 @@
 """Shared raw -> Parquet consolidation: suffix dispatch, staging, table naming."""
 
 import gzip
+import json
 import lzma
 
 import polars as pl
@@ -97,11 +98,26 @@ class TestEnsureParquetTables:
         }
         assert pl.read_parquet(out["one"])["a"].to_list() == [1, 2]
 
-    def test_existing_table_is_not_rewritten(self, raw, tmp_path):
+    def test_existing_unpinned_table_is_not_rewritten(self, raw, tmp_path):
         out = raw_mod.ensure_parquet_tables(raw)
+        (tmp_path / "parquet" / "_tables.json").unlink()
         out["one"].write_bytes(b"sentinel")
         raw_mod.ensure_parquet_tables(raw)
         assert out["one"].read_bytes() == b"sentinel"
+
+    def test_overwritten_pinned_table_raises(self, raw):
+        out = raw_mod.ensure_parquet_tables(raw)
+        out["one"].write_bytes(b"sentinel")
+        with pytest.raises(ValueError, match="different size"):
+            raw_mod.ensure_parquet_tables(raw)
+
+    def test_same_size_corruption_raises(self, raw):
+        out = raw_mod.ensure_parquet_tables(raw)
+        data = bytearray(out["one"].read_bytes())
+        data[len(data) // 2] ^= 0xFF
+        out["one"].write_bytes(bytes(data))
+        with pytest.raises(ValueError, match="differ from the release pinned"):
+            raw_mod.ensure_parquet_tables(raw)
 
     def test_failed_scan_leaves_no_table(self, raw, tmp_path):
         def boom(name, path):
@@ -116,3 +132,36 @@ class TestEnsureParquetTables:
         with pytest.raises(pl.exceptions.PolarsError):
             raw_mod.ensure_parquet_tables({"one": raw["one"]}, scanner=lambda n, p: bad)
         assert not (tmp_path / "parquet" / "one.parquet").exists()
+
+
+class TestTablesManifest:
+    def test_round_trip_with_directory_table(self, tmp_path):
+        (tmp_path / "dd").mkdir()
+        (tmp_path / "a.parquet").touch()
+        tables = {"a": tmp_path / "a.parquet", "dd": tmp_path / "dd"}
+        raw_mod.write_manifest(tmp_path, tables)
+        assert json.loads((tmp_path / "_tables.json").read_text())["tables"] == {
+            "a": "a.parquet",
+            "dd": "dd",
+        }
+        assert raw_mod.read_manifest(tmp_path) == tables
+
+    def test_directory_table_pins_each_part_file(self, tmp_path):
+        d = tmp_path / "dd"
+        d.mkdir()
+        (d / "part-0.parquet").write_bytes(b"x")
+        raw_mod.write_manifest(tmp_path, {"dd": d})
+        assert list(json.loads((tmp_path / "_tables.json").read_text())["files"]) == [
+            "dd/part-0.parquet"
+        ]
+        (d / "part-1.parquet").write_bytes(b"y")  # extra part => rebuild
+        assert raw_mod.read_manifest(tmp_path) is None
+
+    def test_none_without_manifest(self, tmp_path):
+        assert raw_mod.read_manifest(tmp_path) is None
+
+    def test_none_when_a_listed_table_is_missing(self, tmp_path):
+        (tmp_path / "a.parquet").touch()
+        raw_mod.write_manifest(tmp_path, {"a": tmp_path / "a.parquet"})
+        (tmp_path / "a.parquet").unlink()
+        assert raw_mod.read_manifest(tmp_path) is None
