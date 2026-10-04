@@ -116,8 +116,9 @@ class TestEnsureParquetTables:
         data = bytearray(out["one"].read_bytes())
         data[len(data) // 2] ^= 0xFF
         out["one"].write_bytes(bytes(data))
+        assert raw_mod.read_manifest(out["one"].parent) == out  # sizes only
         with pytest.raises(ValueError, match="differ from the release pinned"):
-            raw_mod.ensure_parquet_tables(raw)
+            raw_mod.read_manifest(out["one"].parent, hash_contents=True)
 
     def test_failed_scan_leaves_no_table(self, raw, tmp_path):
         def boom(name, path):

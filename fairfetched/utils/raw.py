@@ -32,10 +32,14 @@ def _files(table_dir: Path, tables: dict[str, Path]) -> dict[str, Path]:
     }
 
 
-def read_manifest(table_dir: Path | str) -> dict[str, Path] | None:
+def read_manifest(
+    table_dir: Path | str, *, hash_contents: bool = False
+) -> dict[str, Path] | None:
     """Tables recorded by :func:`write_manifest`. None if there is no manifest or
     a table or part-file is missing or extra (rebuild); raises ``ValueError`` if a
-    recorded file's size or sha256 changed (corruption or overwrite)."""
+    recorded file's size changed (truncation, overwrite) or, with ``hash_contents``,
+    its sha256 (bit rot). Sizes cost a ``stat``; hashing reads every byte (ChEMBL's
+    1.65 GB of parquet: 4.4 s), so loads check sizes only."""
     table_dir = Path(table_dir)
     path = table_dir / MANIFEST
     if not path.exists():
@@ -50,12 +54,13 @@ def read_manifest(table_dir: Path | str) -> dict[str, Path] | None:
     for rel, f in files.items():
         if f.stat().st_size != recorded["files"][rel]["bytes"]:
             raise ValueError(f"{f} has a different size than recorded in {path}")
-    pins.verify(
-        files,
-        path,
-        strict=True,
-        drift_hint=f"delete {path} to adopt the files as they are, or the table to rebuild it.",
-    )
+    if hash_contents:
+        pins.verify(
+            files,
+            path,
+            strict=True,
+            drift_hint=f"delete {path} to adopt the files as they are, or the table to rebuild it.",
+        )
     return tables
 
 
