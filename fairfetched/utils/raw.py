@@ -142,40 +142,43 @@ def ensure_parquet_tables(
     decompress_first = decompress_first or {}
     recorded = read_manifest(table_dir) or {}
     out: dict[str, Path] = {}
-    for name, path_ in raw_paths.items():
-        if name == "readme":
-            continue
-        table = (table_names or {}).get(name, name)
-        dest = out[table] = table_dir / f"{table}.parquet"
-        if dest.exists():
-            continue
-        _lg.info(f"parsing {path_} -> {dest}")
-        part = dest.with_name(dest.name + ".part")
-        try:
-            with ExitStack() as stack:
-                path = Path(path_)
-                if name in decompress_first and path.suffix == ".gz":
-                    tmp = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-                    check_disk_space(
-                        tmp,
-                        int(path.stat().st_size * decompress_first[name]),
-                        f"decompressing {path.name}",
+    try:
+        for name, path_ in raw_paths.items():
+            if name == "readme":
+                continue
+            table = (table_names or {}).get(name, name)
+            dest = out[table] = table_dir / f"{table}.parquet"
+            if dest.exists():
+                continue
+            _lg.info(f"parsing {path_} -> {dest}")
+            part = dest.with_name(dest.name + ".part")
+            try:
+                with ExitStack() as stack:
+                    path = Path(path_)
+                    if name in decompress_first and path.suffix == ".gz":
+                        tmp = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+                        check_disk_space(
+                            tmp,
+                            int(path.stat().st_size * decompress_first[name]),
+                            f"decompressing {path.name}",
+                        )
+                        path = _decompress(path, tmp / path.with_suffix("").name)
+                    kwargs = (scan_kwargs or {}).get(name, {})
+                    lf = (
+                        scanner(name, path, **kwargs)
+                        if scanner
+                        else scan_raw(path, **kwargs)
                     )
-                    path = _decompress(path, tmp / path.with_suffix("").name)
-                kwargs = (scan_kwargs or {}).get(name, {})
-                lf = (
-                    scanner(name, path, **kwargs)
-                    if scanner
-                    else scan_raw(path, **kwargs)
-                )
-                lf.sink_parquet(part)
-                part.replace(dest)
-        finally:
-            part.unlink(missing_ok=True)
-            if Path(path_).suffix == ".xz":
+                    lf.sink_parquet(part)
+                    part.replace(dest)
+            finally:
+                part.unlink(missing_ok=True)
+        if out.keys() - recorded.keys():
+            write_manifest(table_dir, {**recorded, **out})
+    finally:  # after write_manifest on success; also on a failed scan
+        for path_ in raw_paths.values():
+            if Path(path_).suffix == ".xz":  # the decompressed copy made by scan_raw
                 Path(path_).with_suffix("").unlink(missing_ok=True)
-    if out.keys() - recorded.keys():
-        write_manifest(table_dir, {**recorded, **out})
     return out
 
 
