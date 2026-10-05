@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, fields
-from functools import lru_cache, wraps
-from typing import Any, Callable, ParamSpec, TypeVar
+from functools import lru_cache, partial, wraps
+from typing import Any, ParamSpec, TypeVar
 
 from numpy import uint8
 from numpy.typing import NDArray
@@ -19,11 +20,12 @@ from rdkit.Chem import (
     MolToInchiAndAuxInfo,
     RemoveStereochemistry,
 )
-from rdkit.Chem.Scaffolds import MurckoScaffold
 from rdkit.Chem.rdFingerprintGenerator import FingerprintGenerator64, GetMorganGenerator
+from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
+from rdkit.Chem.Scaffolds import MurckoScaffold
 
-from ._optional import _chembl_standardize
+from ._optional import _chembl_standardize, chembl_get_parent_mol
 
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
 from ._optional import _papyrus_standardize as _papyrus_standardize_impl
@@ -97,6 +99,40 @@ def chembl_standardize(mol, *args, **kwargs):
 
 
 @safe_step
+def get_parent(mol: Mol, exclude_by_chembl_standards: bool = False) -> Mol | None:
+    """`chembl_structure_pipeline.get_parent_mol`: strips salts/solvents and
+    neutralises.
+
+    ChEMBL flags structures it would not register (any metal atom, or more than
+    7 borons, checked on the input); `exclude_by_chembl_standards=True` returns
+    None for those, e.g. cisplatin. Default False keeps them.
+    """
+    parent, exclude = chembl_get_parent_mol(
+        mol, check_exclusion=exclude_by_chembl_standards
+    )
+    return None if exclude and exclude_by_chembl_standards else parent
+
+
+@safe_step
+def _mw_between(mol: Mol, lo: float | None, hi: float | None) -> Mol | None:
+    mw = CalcExactMolWt(mol)
+    if (lo is not None and mw < lo) or (hi is not None and mw > hi):
+        return None
+    return mol
+
+
+def mw_between(lo: float | None = None, hi: float | None = None) -> MolFn:
+    """Step returning None for mols whose exact (monoisotopic) mass is outside
+    [lo, hi], both inclusive; a None bound is open. `mw_between(200, 800)` is
+    the cut Papyrus applies by default.
+
+    Place it after `get_parent`: before it, counter-ions and solvents count
+    towards the mass, so a salt can pass or fail where its parent would not.
+    """
+    return partial(_mw_between, lo=lo, hi=hi)
+
+
+@safe_step
 def papyrus_standardize(mol, *args, **kwargs):
     return _papyrus_standardize_impl(mol, *args, **kwargs)
 
@@ -111,7 +147,7 @@ def valid_inchi(mol: Mol) -> Mol | None:
 @safe_step
 def no_mixtures(mol: Mol) -> Mol | None:
     """returns none if mol is mixture. untested naive implementation (checks for period in smiles)"""
-    logging.warning(
+    logger.warning(
         "fairfetched.standardization.no_mixtures() is still an untested naive implementation"
     )
     return None if "." in MolToSmiles(mol) else mol
@@ -121,7 +157,7 @@ def no_mixtures(mol: Mol) -> Mol | None:
 def only_organic(mol: Mol) -> Mol | None:
     """returns none if mol is organic. untested naive implementation, checks if
     all atoms are ∈ {C,N,O,F,P,S,Cl,Br,I}"""
-    logging.warning(
+    logger.warning(
         "fairfetched.standardization.only_organic() is still an untested naive implementation"
     )
     organic = {6, 7, 8, 9, 15, 16, 17, 35, 53}

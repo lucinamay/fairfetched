@@ -1,10 +1,11 @@
 import logging
 import multiprocessing as mp
 import os
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import polars as pl
 
@@ -21,19 +22,26 @@ from .mol_functions import (
     _binary_to_mol,
     _binary_to_morgan_array,
     _binary_to_scaffold_smiles,
-    _stable_hash64,
     _binary_to_smiles,
     _inchi_to_binary,
     _num_atoms,
     _num_heavy_atoms,
     _smiles_to_binary,
+    _stable_hash64,
+    get_parent,
+    mw_between,
+    remove_stereo,
 )
 from .pipeline import (
     STEPS_CHEMBL,
+    STEPS_CHEMBL_PARENT,
     STEPS_PAPYRUS,
+    STEPS_PAPYRUS_ANY_SIZE,
     STEPS_PAPYRUS_NOSTEREO,
     MolPipeline,
 )
+
+logger = logging.getLogger(__name__)
 
 # //2 for roughly the physical cores - slightly less
 _N_WORKERS: int = round((os.cpu_count() or 2.2) // 2.2)
@@ -65,9 +73,9 @@ def _map_nodedup(
                     )
                 )
             return pl.Series(series.name, results, dtype=return_dtype)
-        except Exception as e:
-            logging.exception(
-                f"'parallel' execution did not work with exception: {e}, resorting to native polars map_batches. "
+        except Exception:
+            logger.exception(
+                "'parallel' execution failed, resorting to native polars map_batches. "
                 "consider passing parallel=False, as this at least allows subdivision into batches"
             )
     return pl.Series(
@@ -125,9 +133,7 @@ class MolExpr(pl.Expr):
     ) -> "MolExpr":
         return cls(
             pl.col(col).map_batches(
-                lambda s, **_: _map(
-                    _inchi_to_binary, s, pl.Binary, parallel, dedup
-                ),
+                lambda s, **_: _map(_inchi_to_binary, s, pl.Binary, parallel, dedup),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
             )
@@ -177,6 +183,34 @@ class MolExpr(pl.Expr):
                 is_elementwise=not parallel,
             )
         )
+
+    def get_parent(
+        self,
+        exclude_by_chembl_standards: bool = False,
+        parallel: bool = False,
+        dedup: bool = False,
+    ) -> "MolExpr":
+        """Strips salts/solvents and neutralises (see `mol_functions.get_parent`)."""
+        step = partial(
+            get_parent, exclude_by_chembl_standards=exclude_by_chembl_standards
+        )
+        return self.standardize(step, parallel=parallel, dedup=dedup)
+
+    def remove_stereo(self, parallel: bool = False, dedup: bool = False) -> "MolExpr":
+        """Removes tetrahedral and double-bond stereochemistry."""
+        return self.standardize(remove_stereo, parallel=parallel, dedup=dedup)
+
+    def mw_between(
+        self,
+        lo: float | None = None,
+        hi: float | None = None,
+        parallel: bool = False,
+        dedup: bool = False,
+    ) -> "MolExpr":
+        """Nulls mols whose exact mass is outside [lo, hi] (inclusive; None =
+        open); drop them with `.drop_nulls()` on the frame. Use after
+        `get_parent`, otherwise counter-ions count towards the mass."""
+        return self.standardize(mw_between(lo, hi), parallel=parallel, dedup=dedup)
 
     def alias(self, name: str) -> "MolExpr":
         return MolExpr(self._expr.alias(name))
@@ -274,7 +308,9 @@ class MolExpr(pl.Expr):
 
 __all__ = [
     "STEPS_CHEMBL",
+    "STEPS_CHEMBL_PARENT",
     "STEPS_PAPYRUS",
+    "STEPS_PAPYRUS_ANY_SIZE",
     "STEPS_PAPYRUS_NOSTEREO",
     "MolExpr",
 ]

@@ -41,7 +41,12 @@ from fairfetched.standardize.mol_functions import (
     valid_inchi,
     via_inchi,
 )
-from fairfetched.standardize.pipeline import STEPS_PAPYRUS, STEPS_PAPYRUS_NOSTEREO
+from fairfetched.standardize.pipeline import (
+    STEPS_CHEMBL_PARENT,
+    STEPS_PAPYRUS,
+    STEPS_PAPYRUS_ANY_SIZE,
+    STEPS_PAPYRUS_NOSTEREO,
+)
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -226,11 +231,8 @@ class TestInvariants:
     def test_salts_are_left_intact(self) -> None:
         """`STEPS_CHEMBL` is `standardize_mol` alone. Salt and solvent stripping
         lives in `get_parent_mol`, which `_optional.py` imports and then never
-        exposes, so sodium acetate comes through as the salt.
-
-        TODO: decide whether STEPS_CHEMBL should include get_parent_mol, or add
-        a STEPS_CHEMBL_PARENT alongside it. "ChEMBL standardization" reads like
-        the full pipeline and this is half of it.
+        exposes, so sodium acetate comes through as the salt. Stripping is
+        `STEPS_CHEMBL_PARENT`, tested in `TestParentAndSize`.
         """
         row = MOLECULES["sodium_acetate_ionic"]
         assert keys([row["input_smiles"]], *me.STEPS_CHEMBL) == [row["chembl_inchikey"]]
@@ -435,7 +437,7 @@ class TestFailureModes:
         logging.disable(logging.CRITICAL)
         try:
             df = pl.DataFrame({"smiles": ["CCO"] * 3})
-            with pytest.raises(Exception):
+            with pytest.raises(ImportError):
                 df.with_columns(
                     MolExpr.from_smiles("smiles")
                     .standardize(mf.chembl_standardize)
@@ -608,6 +610,95 @@ class TestExecutionModes:
             MolExpr.from_smiles("smiles", dedup=True).to_smiles().alias("s")
         )
         assert out["s"].to_list() == ["CCO", None, "CCC", None, "CCO"]
+
+
+class TestParentAndSize:
+    """Salt stripping and mass cut-offs, the two steps that decide whether a
+    drug and its salt, or a small molecule and its Papyrus-filtered self, are
+    one record in a join.
+    """
+
+    BASE = "CN(C)C(=N)NC(N)=N"  # metformin
+    SALT = "CN(C)C(=N)NC(N)=N.Cl"  # metformin hydrochloride
+
+    def test_salt_form_converges_to_parent(self) -> None:
+        """Registry (ChEMBL) lists the free base, SIDER (PubChem) often the
+        salt; without `get_parent` the two get different InChIKeys and the
+        join misses. Expected value is the free base's own key, not a recorded
+        output of the pipeline.
+        """
+        assert len(set(keys([self.BASE, self.SALT], *STEPS_CHEMBL_PARENT))) == 1
+        assert len(set(keys([self.BASE, self.SALT], *me.STEPS_CHEMBL))) == 2
+
+    def test_expr_get_parent_matches_the_step_list(self) -> None:
+        df = pl.DataFrame({"smiles": [self.SALT]})
+        out = df.with_columns(
+            MolExpr.from_smiles("smiles").get_parent().to_inchikey().alias("k")
+        )
+        assert out["k"].to_list() == keys([self.BASE], *me.STEPS_CHEMBL)
+
+    def test_get_parent_in_parallel_matches_serial(self) -> None:
+        """The `partial` carrying `exclude_by_chembl_standards` has to survive
+        pickling into the process pool."""
+        df = pl.DataFrame({"smiles": [self.SALT, self.BASE] * 4})
+        serial, par = (
+            df.with_columns(
+                MolExpr.from_smiles("smiles", parallel=p)
+                .get_parent(parallel=p)
+                .to_inchikey(parallel=p)
+                .alias("k")
+            )["k"].to_list()
+            for p in (False, True)
+        )
+        assert serial == par
+
+    def test_metal_compounds_are_kept_unless_excluded(self) -> None:
+        """ChEMBL's `exclude_flag` rejects any structure with a metal atom;
+        cisplatin is such a structure."""
+        cisplatin = "Cl[Pt]Cl"
+        df = pl.DataFrame({"smiles": [cisplatin]})
+        kept, dropped = (
+            df.with_columns(
+                MolExpr.from_smiles("smiles")
+                .get_parent(exclude_by_chembl_standards=flag)
+                .to_inchikey()
+                .alias("k")
+            )["k"].to_list()
+            for flag in (False, True)
+        )
+        assert kept[0] is not None
+        assert dropped == [None]
+
+    def test_mw_between_uses_exact_mass(self) -> None:
+        """Ethanol, C2H6O: 2*12.000 + 6*1.007825 + 15.994915 = 46.0419."""
+        df = pl.DataFrame({"smiles": ["CCO"]})
+
+        def kept(lo, hi) -> bool:
+            out = df.with_columns(
+                MolExpr.from_smiles("smiles").mw_between(lo, hi).to_smiles().alias("s")
+            )
+            return out["s"][0] is not None
+
+        assert kept(46.0, 46.1)
+        assert not kept(46.05, None)
+        assert not kept(None, 46.0)
+        assert kept(None, None)
+
+    def test_papyrus_any_size_keeps_what_papyrus_drops(self) -> None:
+        """Ethanol (46 Da) is outside Papyrus' 200-800 Da window; cholesterol
+        is inside it and has to come out identical either way."""
+        assert keys(["CCO"], *STEPS_PAPYRUS) == [None]
+        assert keys(["CCO"], *STEPS_PAPYRUS_ANY_SIZE)[0] is not None
+        chol = [smi("cholesterol")]
+        assert keys(chol, *STEPS_PAPYRUS_ANY_SIZE) == keys(chol, *STEPS_PAPYRUS)
+
+    def test_expr_remove_stereo_collapses_enantiomers(self) -> None:
+        pair = [smi("l_alanine"), smi("d_alanine")]
+        df = pl.DataFrame({"smiles": pair})
+        out = df.with_columns(
+            MolExpr.from_smiles("smiles").remove_stereo().to_inchikey().alias("k")
+        )
+        assert len(set(out["k"])) == 1
 
 
 class TestFilterSteps:
