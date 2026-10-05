@@ -3,9 +3,6 @@
 """
 
 import logging as lg
-import shutil
-import tempfile
-import zipfile
 from functools import partial
 from pathlib import Path
 
@@ -13,8 +10,6 @@ import polars as pl
 import polars.selectors as cs
 
 from fairfetched.utils import BASE_DIR, ensure_url, manifest, raw
-from fairfetched.utils.polars import _TEMP_FILES
-from fairfetched.utils.raw import scan_raw
 
 _lg = lg.getLogger(__name__)
 
@@ -102,42 +97,24 @@ def ensure_raw_files(
     return raw_paths
 
 
-def _zip_member(zf: zipfile.ZipFile, *substrings: str) -> str:
-    """The one member of ``zf`` whose name contains every substring; raises on 0
-    or >1 matches. The README's member names disagree with each other (AUG2024
-    stamps, ``flags_`` vs ``flagsv``), so none is hardcoded."""
-    hits = [n for n in zf.namelist() if all(s in n for s in substrings)]
-    if len(hits) != 1:
-        raise ValueError(f"expected 1 zip member with {substrings}, got {hits}")
-    return hits[0]
-
-
-def _scan(name: str, path: Path) -> pl.LazyFrame:
-    """xlsx via :func:`scan_raw`; the zip yields its ``mc5-6`` member, extracted
-    to system temp (not ``BASE_DIR``) and removed at exit."""
-    if name == "assay_annotations":
-        return scan_raw(path, sheet_name="annotations_combined")
-    if name != "summary_zip":
-        return scan_raw(path)
-    with zipfile.ZipFile(path) as zf:
-        member = _zip_member(zf, "mc5-6", "winning_model_fits", ".csv")
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
-            _TEMP_FILES.append(tmp.name)
-            with zf.open(member) as src:
-                shutil.copyfileobj(src, tmp)
-    # R's NA literal; without it numeric model-fit columns read as String.
-    # Full-file inference: R writes round numbers as 1.8e+07 and decimals appear
-    # late, so a prefix infers Int64 for columns that fail further down.
-    return scan_raw(tmp.name, null_values=["NA"], infer_schema_length=None)
-
-
 def ensure_parquet_tables(
     raw_paths: dict[str, Path], table_dir: Path | str | None = None
 ) -> dict[str, Path]:
     """Consolidate each raw file into a Parquet table, untouched. The summary
-    zip yields ``mc5_mc6``; the xlsx files keep their names."""
+    zip yields ``mc5_mc6`` from its ``mc5-6`` member, extracted to system temp;
+    the xlsx files keep their names."""
     return raw.ensure_parquet_tables(
-        raw_paths, table_dir, scanner=_scan, table_names=_TABLE_NAME
+        raw_paths,
+        table_dir,
+        scan_kwargs={
+            "assay_annotations": {"sheet_name": "annotations_combined"},
+            # R's NA literal; without it numeric model-fit columns read as String.
+            # Full-file inference: R writes round numbers as 1.8e+07 and decimals
+            # appear late, so a prefix infers Int64 for columns that fail further down.
+            "summary_zip": {"null_values": ["NA"], "infer_schema_length": None},
+        },
+        table_names=_TABLE_NAME,
+        members={"summary_zip": ("mc5-6", "winning_model_fits", ".csv")},
     )
 
 

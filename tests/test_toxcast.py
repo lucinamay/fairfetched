@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from fairfetched.get import toxcast
+from fairfetched.utils import raw
 from fairfetched.utils.ensure import ensure_url
 
 # Clowder file ids/sizes as listed by the Clowder API for the v4.3 dataset
@@ -45,43 +46,43 @@ class TestZipMember:
         zp = _zip(
             tmp_path / "a.zip",
             {
-                "mc5-6_winning_model_fits-c2021_invitrodbv4_3_AUG2024.csv": "",
+                "mc5-6_winning_model_fits-c2021_invitrodbv4_3_AUG2024.csv": "x\n1\n",
                 "mc5-6_winning_model_fits-c2021_invitrodbv4_3_AUG2024.Rdata": "",
                 "mc4_all_model_fits_invitrodbv4_3_AUG2024.csv": "",
             },
         )
-        with zipfile.ZipFile(zp) as zf:
-            assert toxcast._zip_member(
-                zf, "mc5-6", "winning_model_fits", ".csv"
-            ).endswith("AUG2024.csv")
+        out = raw._extract_zip_member(
+            zp, ("mc5-6", "winning_model_fits", ".csv"), tmp_path
+        )
+        assert out.name.endswith("AUG2024.csv") and out.read_text() == "x\n1\n"
 
     def test_zero_matches_raises(self, tmp_path):
         zp = _zip(tmp_path / "a.zip", {"other.csv": ""})
-        with zipfile.ZipFile(zp) as zf, pytest.raises(ValueError):
-            toxcast._zip_member(zf, "mc5-6")
+        with pytest.raises(ValueError):
+            raw._extract_zip_member(zp, ("mc5-6",), tmp_path)
 
     def test_ambiguous_raises(self, tmp_path):
         zp = _zip(tmp_path / "a.zip", {"mc5-6_a.csv": "", "mc5-6_b.csv": ""})
-        with zipfile.ZipFile(zp) as zf, pytest.raises(ValueError):
-            toxcast._zip_member(zf, "mc5-6")
+        with pytest.raises(ValueError):
+            raw._extract_zip_member(zp, ("mc5-6",), tmp_path)
+
+
+def _mc56(tmp_path: Path, body: str) -> pl.DataFrame:
+    zp = _zip(tmp_path / "s.zip", {"mc5-6_winning_model_fits_x.csv": body})
+    out = toxcast.ensure_parquet_tables({"summary_zip": zp}, tmp_path / "pq")
+    return pl.read_parquet(out["mc5_mc6"])
 
 
 class TestMc56Extraction:
     def test_na_literal_is_null_and_columns_stay_numeric(self, tmp_path):
-        zp = _zip(
-            tmp_path / "s.zip",
-            {"mc5-6_winning_model_fits_x.csv": "aeid,spid,ac50\n1,a,0.5\n1,b,NA\n"},
-        )
-        df = toxcast._scan("summary_zip", zp).collect()
+        df = _mc56(tmp_path, "aeid,spid,ac50\n1,a,0.5\n1,b,NA\n")
         assert df.schema["ac50"] == pl.Float64
         assert df["ac50"].to_list() == [0.5, None]
 
     def test_late_scientific_notation_does_not_break_inference(self, tmp_path):
         # R writes round ids as 1.8e+07; only the last row, past any short prefix
         body = "aeid,m4id\n" + "1,14190200\n" * 100_001 + "1,1.8e+07\n"
-        zp = _zip(tmp_path / "s.zip", {"mc5-6_winning_model_fits_x.csv": body})
-        df = toxcast._scan("summary_zip", zp).collect()
-        assert df["m4id"].max() == 18_000_000
+        assert _mc56(tmp_path, body)["m4id"].max() == 18_000_000
 
 
 class TestClean:
