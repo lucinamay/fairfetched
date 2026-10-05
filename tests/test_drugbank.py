@@ -12,7 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fairfetched.get import drugbank
+from fairfetched.get import Drugbank, drugbank
 
 # Two top-level drugs. Drug 2 carries a <pathways> block with a *nested* <drug>
 # that must not be counted as a third drug, shares bio-entity BE9000001 with drug 1
@@ -221,6 +221,31 @@ class TestRegister:
             xml_file, "5.1.13", tmp_path / "raw"
         )  # no force: verify path
         assert a == b
+
+    def test_force_rebuilds_tables_from_replaced_xml(self, tmp_path, xml_file):
+        root_dir = tmp_path / "drugbank"
+        first = Drugbank.from_xml(xml_file, version="5.1.13", root_dir=root_dir)
+        assert (
+            pl.read_parquet(first.parquet_paths["drug"])
+            .filter(drugbank_id="DB90001")
+            .item(0, "name")
+            == "Fakezumab"
+        )
+
+        replacement = tmp_path / "replacement.xml"
+        replacement.write_text(
+            _XML.replace("<name>Fakezumab</name>", "<name>Updatedzumab</name>")
+        )
+        second = Drugbank.from_xml(
+            replacement, version="5.1.13", root_dir=root_dir, force=True
+        )
+
+        assert (
+            pl.read_parquet(second.parquet_paths["drug"])
+            .filter(drugbank_id="DB90001")
+            .item(0, "name")
+            == "Updatedzumab"
+        )
 
     def test_tampered_cache_raises(self, raw_paths):
         gz = raw_paths["full_database"]

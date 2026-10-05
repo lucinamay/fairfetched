@@ -379,7 +379,7 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
 
 
 def ensure_parquet_tables(
-    raw_paths: dict[str, Path], table_dir: Path | str | None = None
+    raw_paths: dict[str, Path], table_dir: Path | str | None = None, force: bool = False
 ) -> dict[str, Path]:
     """Stream-parse the gzipped XML into four Parquet tables. Untouched values;
     cleaning happens on scan. Skipped if ``_tables.json`` lists all four and
@@ -399,7 +399,11 @@ def ensure_parquet_tables(
     table_dir.mkdir(parents=True, exist_ok=True)
     dests = {t: table_dir / f"{t}.parquet" for t in ("drug", "biomolecule", "pathway")}
     dests["drug_drug"] = table_dir / "drug_drug"  # a directory of part-files
-    if (recorded := raw.read_manifest(table_dir)) and dests.keys() <= recorded.keys():
+    if (
+        not force
+        and (recorded := raw.read_manifest(table_dir))
+        and dests.keys() <= recorded.keys()
+    ):
         return dests
 
     # written here, moved into place only once all four are complete
