@@ -6,6 +6,7 @@ import logging as lg
 import lzma
 import shutil
 import tempfile
+import zipfile
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
@@ -101,6 +102,24 @@ def _decompress(path: Path, out: Path) -> Path:
     return out
 
 
+def _extract_zip_member(path: Path, substrings: tuple[str, ...], out_dir: Path) -> Path:
+    """Extract the one member of zip ``path`` whose name contains every substring;
+    raises on 0 or >1 matches (member names carry stamps that vary between releases)."""
+    with zipfile.ZipFile(path) as zf:
+        hits = [n for n in zf.namelist() if all(s in n for s in substrings)]
+        if len(hits) != 1:
+            raise ValueError(
+                f"expected 1 member of {path.name} with {substrings}, got {hits}"
+            )
+        check_disk_space(
+            out_dir, zf.getinfo(hits[0]).file_size, f"extracting {hits[0]}"
+        )
+        out = out_dir / Path(hits[0]).name
+        with zf.open(hits[0]) as src, out.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+    return out
+
+
 def scan_raw(path: Path | str, **scan_kwargs) -> pl.LazyFrame:
     """Lazy frame over one tabular file, reader chosen by suffix.
 
@@ -132,6 +151,7 @@ def ensure_parquet_tables(
     scanner: Callable[..., pl.LazyFrame] | None = None,
     table_names: dict[str, str] | None = None,
     decompress_first: dict[str, float] | None = None,
+    members: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Path]:
     """Stream each raw file into ``<table_dir>/<table>.parquet``, untouched; skip
     tables that exist and the ``readme`` entry. A table is written to ``.part`` and renamed, so an
@@ -143,6 +163,8 @@ def ensure_parquet_tables(
     :func:`scan_raw` for sources needing extra checks or parsing.
     ``decompress_first`` maps selected gzip tables to an estimated uncompressed
     size / archive size; each is checked and staged in system temp for its sink.
+    ``members`` maps zip tables to name substrings selecting the one member to
+    extract (checked, staged in system temp) and scan in place of the archive.
     ``table_names`` renames raw name -> table name. ``table_dir`` defaults to
     ``<raw dir>/../parquet``.
     """
@@ -152,6 +174,7 @@ def ensure_parquet_tables(
     table_dir.mkdir(exist_ok=True, parents=True)
 
     decompress_first = decompress_first or {}
+    members = members or {}
     recorded = read_manifest(table_dir, only_size_presence=True)
     out: dict[str, Path] = {}
     try:
@@ -167,7 +190,10 @@ def ensure_parquet_tables(
             try:
                 with ExitStack() as stack:
                     path = Path(path_)
-                    if name in decompress_first and path.suffix == ".gz":
+                    if name in members:
+                        tmp = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+                        path = _extract_zip_member(path, members[name], tmp)
+                    elif name in decompress_first and path.suffix == ".gz":
                         tmp = Path(stack.enter_context(tempfile.TemporaryDirectory()))
                         check_disk_space(
                             tmp,

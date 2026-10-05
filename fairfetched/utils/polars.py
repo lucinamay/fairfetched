@@ -1,10 +1,6 @@
-import atexit
 import logging
-import lzma
 import os
-import shutil
 import sqlite3
-import tempfile
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache, partial
 from pathlib import Path
@@ -16,58 +12,6 @@ import polars as pl
 from fairfetched.utils._track import track
 
 _lg = logging.getLogger(__name__)
-
-_TEMP_FILES: list[str] = []
-
-
-def _cleanup_temp_files():
-    for f in _TEMP_FILES:
-        if os.path.exists(f):
-            os.remove(f)
-
-
-atexit.register(_cleanup_temp_files)
-
-
-def decompress_and_scan_tsvxz(path: str | Path, **kwargs) -> pl.LazyFrame:
-    path = Path(path)
-    _lg.debug(f"scanning {path}")
-    print(f"scanning {path}")
-
-    # Polars cannot lazily scan a compressed stream without buffering the entire
-    # decompressed content into memory, leading to OOM for large files.
-    # We decompress to a temporary file first to enable true lazy scanning.
-    tmp = tempfile.NamedTemporaryFile(
-        prefix=path.stem + ".", suffix=".tsv", dir=path.parent, delete=False
-    )
-    _TEMP_FILES.append(tmp.name)
-    with lzma.open(path, "rb") as f_in:
-        shutil.copyfileobj(f_in, tmp)
-    tmp.close()
-
-    return pl.scan_csv(tmp.name, **kwargs)
-
-
-def __tmpfile(true_file: Path) -> Path:
-    """Create the temp file in the same directory as the target file so
-    os.replace(tmp, true_file) can perform an atomic rename without
-    raising "Invalid cross-device link"."""
-    tmp = tempfile.NamedTemporaryFile(
-        prefix=true_file.stem + ".",
-        suffix=true_file.suffix,
-        dir=str(true_file.parent),
-        delete=False,
-    )
-    pth = Path(tmp.name)
-    tmp.close()
-    return pth
-
-
-def overwrite_scanned_lf(lf: pl.LazyFrame, path_: Path, **kwargs) -> None:
-    tmpfile = __tmpfile(path_)
-    lf.sink_parquet(tmpfile, **kwargs)
-    os.replace(tmpfile, path_)
-
 
 def lowercase_columns(df: pl.LazyFrame) -> pl.LazyFrame:
     return df.select(pl.all().name.to_lowercase())
