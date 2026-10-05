@@ -237,3 +237,16 @@ class TestChemblTablesManifest:
         ):
             chembl.ensure_parquet_tables(raw_paths, temp_dir / "pq")
         assert not (temp_dir / "pq" / "_tables.json").exists()
+
+
+class TestEnsureUntarredSqlite:
+    def test_truncated_extraction_is_redone(self, tmp_path):
+        src = tmp_path / "src" / "x.db"
+        src.parent.mkdir()
+        src.write_bytes(b"0123456789" * 100)
+        tar = tmp_path / "x.tar.gz"
+        with tarfile.open(tar, "w:gz") as f:
+            f.add(src, arcname="chembl/x.db")
+        out = untar_sqlite(tar)
+        out.write_bytes(out.read_bytes()[:10])
+        assert untar_sqlite(tar).stat().st_size == 1000

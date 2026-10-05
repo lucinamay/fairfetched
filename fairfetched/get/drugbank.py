@@ -383,7 +383,7 @@ def ensure_parquet_tables(
 ) -> dict[str, Path]:
     """Stream-parse the gzipped XML into four Parquet tables. Untouched values;
     cleaning happens on scan. Skipped if ``_tables.json`` lists all four and
-    their hashes still match (:func:`fairfetched.utils.raw.write_manifest`).
+    their sizes still match (:func:`fairfetched.utils.raw.write_manifest`).
 
     ``drug`` is the main table: one row per drug carrying every block that hangs off
     exactly one drug as a ``List(Struct)`` column, plus a foreign key to each
@@ -460,6 +460,9 @@ def ensure_parquet_tables(
             staged[name], compression="zstd"
         )
 
+    # the old manifest would list sizes of tables about to be replaced; an
+    # interruption mid-swap must not leave it behind to raise a false size error
+    (table_dir / raw.MANIFEST).unlink(missing_ok=True)
     # drug.parquet last: until it lands, the all-exist check above re-parses
     dests["drug"].unlink(missing_ok=True)
     shutil.rmtree(dests["drug_drug"], ignore_errors=True)

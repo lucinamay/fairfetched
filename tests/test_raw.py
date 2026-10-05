@@ -120,6 +120,20 @@ class TestEnsureParquetTables:
         with pytest.raises(ValueError, match="differ from the release pinned"):
             raw_mod.read_manifest(out["one"].parent, hash_contents=True)
 
+    def test_truncated_sibling_of_missing_table_raises(self, raw):
+        out = raw_mod.ensure_parquet_tables(raw)
+        out["two"].unlink()
+        out["one"].write_bytes(b"sentinel")
+        with pytest.raises(ValueError, match="different size"):
+            raw_mod.ensure_parquet_tables(raw)
+
+    def test_subset_call_keeps_other_tables_pinned(self, raw):
+        out = raw_mod.ensure_parquet_tables(raw)
+        out["two"].unlink()
+        raw_mod.ensure_parquet_tables({"two": raw["two"]})
+        recorded = json.loads((out["one"].parent / "_tables.json").read_text())
+        assert recorded["tables"].keys() == {"one", "two"}
+
     def test_failed_scan_leaves_no_table(self, raw, tmp_path):
         def boom(name, path):
             raise RuntimeError("scan failed")
@@ -166,3 +180,24 @@ class TestTablesManifest:
         raw_mod.write_manifest(tmp_path, {"a": tmp_path / "a.parquet"})
         (tmp_path / "a.parquet").unlink()
         assert raw_mod.read_manifest(tmp_path) is None
+
+    def test_size_mismatch_raises_although_another_table_is_missing(self, tmp_path):
+        for t in "ab":
+            (tmp_path / f"{t}.parquet").write_bytes(b"xx")
+        tables = {t: tmp_path / f"{t}.parquet" for t in "ab"}
+        raw_mod.write_manifest(tmp_path, tables)
+        tables["a"].unlink()
+        tables["b"].write_bytes(b"x")
+        with pytest.raises(ValueError, match="different size"):
+            raw_mod.read_manifest(tmp_path)
+
+    def test_partial_returns_the_tables_still_present(self, tmp_path):
+        for t in "ab":
+            (tmp_path / f"{t}.parquet").touch()
+        tables = {t: tmp_path / f"{t}.parquet" for t in "ab"}
+        raw_mod.write_manifest(tmp_path, tables)
+        tables["a"].unlink()
+        assert raw_mod.read_manifest(tmp_path, only_size_presence=True) == {
+            "b": tables["b"]
+        }
+        assert raw_mod.read_manifest(tmp_path / "none", only_size_presence=True) == {}

@@ -33,34 +33,46 @@ def _files(table_dir: Path, tables: dict[str, Path]) -> dict[str, Path]:
 
 
 def read_manifest(
-    table_dir: Path | str, *, hash_contents: bool = False
+    table_dir: Path | str,
+    *,
+    hash_contents: bool = False,
+    only_size_presence: bool = False,
 ) -> dict[str, Path] | None:
     """Tables recorded by :func:`write_manifest`. None if there is no manifest or
-    a table or part-file is missing or extra (rebuild); raises ``ValueError`` if a
-    recorded file's size changed (truncation, overwrite) or, with ``hash_contents``,
-    its sha256 (bit rot). Sizes cost a ``stat``; hashing reads every byte (ChEMBL's
-    1.65 GB of parquet: 4.4 s), so loads check sizes only."""
+    a table or part-file is missing or extra (rebuild); ``partial`` instead returns
+    the recorded tables still present (``{}`` without a manifest). Raises
+    ``ValueError`` if a present file's size changed (truncation, overwrite) or, with
+    ``hash_contents``, its sha256 (bit rot), even when another table is missing.
+    Sizes cost a ``stat``; hashing reads every byte (ChEMBL's 1.65 GB of parquet:
+    4.4 s), so loads check sizes only."""
     table_dir = Path(table_dir)
     path = table_dir / MANIFEST
     if not path.exists():
-        return None
+        return {} if only_size_presence else None
     recorded = json.loads(path.read_text())
     tables = {t: table_dir / rel for t, rel in recorded["tables"].items()}
-    if not all(p.exists() for p in tables.values()):
-        return None
-    files = _files(table_dir, tables)
-    if files.keys() != recorded["files"].keys():
-        return None
+    present = {t: p for t, p in tables.items() if p.exists()}
+    files = _files(table_dir, present)
     for rel, f in files.items():
-        if f.stat().st_size != recorded["files"][rel]["bytes"]:
-            raise ValueError(f"{f} has a different size than recorded in {path}")
+        if (
+            rel in recorded["files"]
+            and f.stat().st_size != recorded["files"][rel]["bytes"]
+        ):
+            raise ValueError(
+                f"{f} has a different size than recorded in {path}; delete {path} "
+                f"to adopt the files as they are, or the table to rebuild it."
+            )
     if hash_contents:
         pins.verify(
-            files,
+            {rel: f for rel, f in files.items() if rel in recorded["files"]},
             path,
             strict=True,
             drift_hint=f"delete {path} to adopt the files as they are, or the table to rebuild it.",
         )
+    if len(present) < len(tables):
+        return present if only_size_presence else None
+    if files.keys() != recorded["files"].keys():
+        return None
     return tables
 
 
@@ -124,7 +136,7 @@ def ensure_parquet_tables(
     """Stream each raw file into ``<table_dir>/<table>.parquet``, untouched; skip
     tables that exist and the ``readme`` entry. A table is written to ``.part`` and renamed, so an
     interrupted run leaves no partial table. Finished tables are pinned in
-    ``_tables.json`` (:func:`write_manifest`) and verified on every later call.
+    ``_tables.json`` (:func:`write_manifest`); every later call checks their sizes.
 
     ``scan_kwargs`` (per raw name) go to :func:`scan_raw` or to
     ``scanner(name, path, **kwargs)`` when supplied. ``scanner`` replaces
@@ -140,7 +152,7 @@ def ensure_parquet_tables(
     table_dir.mkdir(exist_ok=True, parents=True)
 
     decompress_first = decompress_first or {}
-    recorded = read_manifest(table_dir) or {}
+    recorded = read_manifest(table_dir, only_size_presence=True)
     out: dict[str, Path] = {}
     try:
         for name, path_ in raw_paths.items():
