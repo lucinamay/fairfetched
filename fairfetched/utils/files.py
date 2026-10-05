@@ -28,7 +28,7 @@ def ensure_untarred_sqlite(tar_gz_path: str | Path) -> Path:
             targetpath = Path(tar_gz_path).parent / tar_subfile.name.split("/")[-1]
             _lg.debug(f"checking if {tar_gz_path} is extracted to {targetpath}")
             files.append(targetpath)
-            if not targetpath.exists():
+            if not targetpath.exists() or targetpath.stat().st_size != tar_subfile.size:
                 _lg.debug(f"extracting {tar_subfile}")
                 try:
                     tar_file._extract_member(tar_subfile, str(targetpath))

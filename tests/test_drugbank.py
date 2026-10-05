@@ -12,7 +12,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from fairfetched.get import drugbank
+from fairfetched.get import Drugbank, drugbank
 
 # Two top-level drugs. Drug 2 carries a <pathways> block with a *nested* <drug>
 # that must not be counted as a third drug, shares bio-entity BE9000001 with drug 1
@@ -222,6 +222,31 @@ class TestRegister:
         )  # no force: verify path
         assert a == b
 
+    def test_force_rebuilds_tables_from_replaced_xml(self, tmp_path, xml_file):
+        root_dir = tmp_path / "drugbank"
+        first = Drugbank.from_xml(xml_file, version="5.1.13", root_dir=root_dir)
+        assert (
+            pl.read_parquet(first.parquet_paths["drug"])
+            .filter(drugbank_id="DB90001")
+            .item(0, "name")
+            == "Fakezumab"
+        )
+
+        replacement = tmp_path / "replacement.xml"
+        replacement.write_text(
+            _XML.replace("<name>Fakezumab</name>", "<name>Updatedzumab</name>")
+        )
+        second = Drugbank.from_xml(
+            replacement, version="5.1.13", root_dir=root_dir, force=True
+        )
+
+        assert (
+            pl.read_parquet(second.parquet_paths["drug"])
+            .filter(drugbank_id="DB90001")
+            .item(0, "name")
+            == "Updatedzumab"
+        )
+
     def test_tampered_cache_raises(self, raw_paths):
         gz = raw_paths["full_database"]
         with gzip.open(gz, "wb") as fh:
@@ -354,6 +379,21 @@ class TestParse:
         again = drugbank.ensure_parquet_tables(raw_paths, tmp_path / "pq")
         assert {t: p.stat().st_mtime_ns for t, p in again.items()} == mtimes
 
+    def test_rebuild_drops_manifest_before_swapping_tables(
+        self, tmp_path, raw_paths, monkeypatch
+    ):
+        pq = tmp_path / "pq"
+        drugbank.ensure_parquet_tables(raw_paths, pq)
+        (pq / "pathway.parquet").unlink()  # forces a rebuild
+
+        def interrupted(*args):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(drugbank.raw, "write_manifest", interrupted)
+        with pytest.raises(KeyboardInterrupt):
+            drugbank.ensure_parquet_tables(raw_paths, pq)
+        assert not (pq / "_tables.json").exists()
+
     @pytest.mark.parametrize("left_in", ["drug_drug", "_partial/drug_drug"])
     def test_reparse_drops_stale_parts(self, tmp_path, raw_paths, left_in):
         stale = tmp_path / "pq" / left_in / "part-9999.parquet"
@@ -365,7 +405,9 @@ class TestParse:
 
     def test_failed_parse_leaves_no_tables(self, tmp_path):
         bad = tmp_path / "bad.xml"
-        bad.write_text(_XML.replace("<unii>FAKE123</unii>", "<unii>a</unii><unii>b</unii>"))
+        bad.write_text(
+            _XML.replace("<unii>FAKE123</unii>", "<unii>a</unii><unii>b</unii>")
+        )
         raw = drugbank.register(bad, version="5.1.13", raw_dir=tmp_path / "raw")
         with pytest.raises(ValueError, match="repeats <unii>") as err:
             drugbank.ensure_parquet_tables(raw, tmp_path / "pq")

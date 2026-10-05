@@ -691,7 +691,7 @@ class Drugbank(_Base):
             version, raw_dir=dir / "raw", xml_path=xml_path, force=force
         )
         parquet_paths = drugbank.ensure_parquet_tables(
-            raw_paths, table_dir=dir / "parquet"
+            raw_paths, table_dir=dir / "parquet", force=force
         )
         return cls(
             version=version,

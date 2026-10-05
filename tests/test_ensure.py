@@ -92,6 +92,28 @@ def test_ensure_url_force_redownload(temp_dir):
     assert target_path.read_bytes() == new_content
 
 
+def test_ensure_url_rejects_truncated_response_without_replacing_existing_file(
+    temp_dir,
+):
+    target_path = temp_dir / "file.txt"
+    target_path.write_bytes(b"complete old content")
+
+    mock_resp = Mock()
+    mock_resp.read = Mock(side_effect=[b"short", b""])
+    mock_resp.getheader = Mock(return_value="6")
+    mock_resp.__enter__ = Mock(return_value=mock_resp)
+    mock_resp.__exit__ = Mock(return_value=None)
+
+    with (
+        patch("urllib.request.urlopen", return_value=mock_resp),
+        pytest.raises(OSError, match="ended after 5 bytes; expected 6 bytes"),
+    ):
+        ensure_url("http://example.com/file.txt", target_path, force=True)
+
+    assert target_path.read_bytes() == b"complete old content"
+    assert not target_path.with_name("file.txt.part").exists()
+
+
 def test_ensure_url_handles_chunked_response(temp_dir):
     """Test that ensure_url correctly handles chunked response."""
     target_path = temp_dir / "chunked.txt"

@@ -379,10 +379,11 @@ def _split(elem, biomolecules: dict, pathways: dict, ddi: list) -> dict:
 
 
 def ensure_parquet_tables(
-    raw_paths: dict[str, Path], table_dir: Path | str | None = None
+    raw_paths: dict[str, Path], table_dir: Path | str | None = None, force: bool = False
 ) -> dict[str, Path]:
     """Stream-parse the gzipped XML into four Parquet tables. Untouched values;
-    cleaning happens on scan. Skipped entirely if all four already exist.
+    cleaning happens on scan. Skipped if ``_tables.json`` lists all four and
+    their sizes still match (:func:`fairfetched.utils.raw.write_manifest`).
 
     ``drug`` is the main table: one row per drug carrying every block that hangs off
     exactly one drug as a ``List(Struct)`` column, plus a foreign key to each
@@ -398,7 +399,11 @@ def ensure_parquet_tables(
     table_dir.mkdir(parents=True, exist_ok=True)
     dests = {t: table_dir / f"{t}.parquet" for t in ("drug", "biomolecule", "pathway")}
     dests["drug_drug"] = table_dir / "drug_drug"  # a directory of part-files
-    if all(d.exists() for d in dests.values()):
+    if (
+        not force
+        and (recorded := raw.read_manifest(table_dir))
+        and dests.keys() <= recorded.keys()
+    ):
         return dests
 
     # written here, moved into place only once all four are complete
@@ -459,13 +464,16 @@ def ensure_parquet_tables(
             staged[name], compression="zstd"
         )
 
+    # the old manifest would list sizes of tables about to be replaced; an
+    # interruption mid-swap must not leave it behind to raise a false size error
+    (table_dir / raw.MANIFEST).unlink(missing_ok=True)
     # drug.parquet last: until it lands, the all-exist check above re-parses
     dests["drug"].unlink(missing_ok=True)
     shutil.rmtree(dests["drug_drug"], ignore_errors=True)
     for t in ("drug_drug", "biomolecule", "pathway", "drug"):
         staged[t].replace(dests[t])
     staging.rmdir()
-    return dests
+    return raw.write_manifest(table_dir, dests)
 
 
 # -- scan / view --------------------------------------------------------

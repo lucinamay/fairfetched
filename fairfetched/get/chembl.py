@@ -81,18 +81,24 @@ def ensure_raw_files(
 def ensure_parquet_tables(
     raw_paths: dict[str, Path], table_dir: Path | str | Any | None = None
 ) -> dict[str, Path]:
+    """One parquet per ChEMBL table. The untarred ``.db`` is deleted once the tables
+    are recorded in ``_tables.json`` (see :func:`fairfetched.utils.raw.write_manifest`),
+    and later calls return from that manifest without untarring."""
     sql_tar_gz_path = raw_paths["sql_db"]
     if table_dir is None:
         table_dir = Path(sql_tar_gz_path).parent / "extracted"
     table_dir = Path(table_dir)
     table_dir.mkdir(exist_ok=True, parents=True)
 
-    raw_sql = ensure_untarred_sqlite(sql_tar_gz_path)
-    # the untarred should also stay so that we have access.....
-    # #@TODO: perhaps make tables deterministic for chembl to circumvent
-    parquets = ensure_sqlite_db_to_parquets(raw_sql, cache_dir=table_dir, force=False)
+    if tables := raw.read_manifest(table_dir):
+        return tables
 
-    return parquets
+    raw_sql = ensure_untarred_sqlite(sql_tar_gz_path)
+    tables = raw.write_manifest(
+        table_dir, ensure_sqlite_db_to_parquets(raw_sql, cache_dir=table_dir)
+    )
+    raw_sql.unlink()
+    return tables
 
 
 def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
