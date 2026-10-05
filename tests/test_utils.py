@@ -11,6 +11,7 @@ import pytest
 from fairfetched.get import chembl
 from fairfetched.utils import _track as track_module
 from fairfetched.utils.files import ensure_untarred_sqlite as untar_sqlite
+from fairfetched.utils.polars import ensure_sqlite_db_to_parquets
 from fairfetched.utils.storage import _get_fairfetched_home_dir
 
 
@@ -53,6 +54,17 @@ def tar_gz_archive(sample_sqlite_db, temp_dir):
         tar.add(sample_sqlite_db, arcname="test.db")
 
     return archive_path
+
+
+def test_sqlite_conversion_accepts_apostrophes_in_paths(sample_sqlite_db, temp_dir):
+    db_path = temp_dir / "O'Brien.db"
+    sample_sqlite_db.replace(db_path)
+
+    parquet_paths = ensure_sqlite_db_to_parquets(
+        db_path, cache_dir=temp_dir / "O'Brien-parquet"
+    )
+
+    assert parquet_paths["test_table"].is_file()
 
 
 def test_untar_sqlite_from_tar_gz(tar_gz_archive, temp_dir):

@@ -96,6 +96,11 @@ def _sqlite_tables(db_path: str | Path) -> list[str]:
             )
 
 
+def _sql_string(value: str | Path) -> str:
+    """Quote a value for a DuckDB SQL string literal."""
+    return str(value).replace("'", "''")
+
+
 def ensure_sqlite_db_to_parquets(
     db_path: str | Path, cache_dir: str | Path | None = None, force: bool = False
 ) -> dict[str, Path]:
@@ -113,8 +118,7 @@ def ensure_sqlite_db_to_parquets(
 
     con = duckdb.connect()
     con.execute("INSTALL sqlite; LOAD sqlite;")
-    con.execute(f"ATTACH '{db_path}' AS src (TYPE sqlite, READ_ONLY)")
-
+    con.execute(f"ATTACH '{_sql_string(db_path)}' AS src (TYPE sqlite, READ_ONLY)")
 
     for t in track(tables, desc="extracting tables from sqlite"):
         path_out = out[t]
@@ -122,8 +126,12 @@ def ensure_sqlite_db_to_parquets(
             continue
         _lg.debug(f"starting extraction of {t}")
         part = path_out.with_name(path_out.name + ".part")
-        con.execute(f"COPY (SELECT * FROM src.\"{t}\") TO '{part}' (FORMAT parquet)")
-        part.replace(path_out)  # an interrupted copy never leaves a table that looks complete
+        con.execute(
+            f"COPY (SELECT * FROM src.\"{t}\") TO '{_sql_string(part)}' (FORMAT parquet)"
+        )
+        part.replace(
+            path_out
+        )  # an interrupted copy never leaves a table that looks complete
 
     con.close()
     return out
