@@ -60,13 +60,19 @@ def ensure_url(url: str, path: Path | str, force: bool = False) -> Path:
 
         # staged so an interrupted download is not mistaken for a complete file
         part = path.with_name(path.name + ".part")
+        received = 0
         with open(part, "wb") as f:
-            f.writelines(
-                track(
-                    _iter_resp(),
-                    total=(total // chunk_size) + int(total % chunk_size != 0),
-                    desc=f"downloading {url.split('/')[-1]}",
-                )
+            for chunk in track(
+                _iter_resp(),
+                total=(total // chunk_size) + int(total % chunk_size != 0),
+                desc=f"downloading {url.split('/')[-1]}",
+            ):
+                f.write(chunk)
+                received += len(chunk)
+        if total and received != total:
+            part.unlink(missing_ok=True)
+            raise OSError(
+                f"download of {url} ended after {received} bytes; expected {total} bytes"
             )
         part.replace(path)
     _lg.info(f"Downloaded {url} to {path} on {datetime.now()}")  # ruff: ignore[DTZ005]
