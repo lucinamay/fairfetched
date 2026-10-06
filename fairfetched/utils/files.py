@@ -1,6 +1,7 @@
 import logging as lg
 import re
 import tarfile
+from functools import partial
 from pathlib import Path
 
 from fairfetched.utils._track import track
@@ -21,7 +22,7 @@ def file_suffix_from_url(url: str) -> str:
 def ensure_untarred_sqlite(tar_gz_path: str | Path) -> Path:
     files: list[Path] = []
     with tarfile.open(tar_gz_path, mode="r", encoding="utf-8") as tar_file:
-        for tar_subfile in track(tar_file, desc="extracting tar file"):
+        for tar_subfile in tar_file:
             if not tar_subfile.name.endswith(".db"):
                 _lg.debug(f"skipping {tar_subfile}")
                 continue
@@ -31,7 +32,17 @@ def ensure_untarred_sqlite(tar_gz_path: str | Path) -> Path:
             if not targetpath.exists() or targetpath.stat().st_size != tar_subfile.size:
                 _lg.debug(f"extracting {tar_subfile}")
                 try:
-                    tar_file._extract_member(tar_subfile, str(targetpath))
+                    chunk_size = 1 << 20
+                    with (
+                        tar_file.extractfile(tar_subfile) as src,
+                        targetpath.open("wb") as dst,
+                    ):
+                        for chunk in track(
+                            iter(partial(src.read, chunk_size), b""),
+                            total=-(-tar_subfile.size // chunk_size),
+                            desc="extracting tar file",
+                        ):
+                            dst.write(chunk)
                 except EOFError as e:
                     raise RuntimeError(
                         f"EOF error raised: {e}. This is most likely"
