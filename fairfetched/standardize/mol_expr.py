@@ -292,6 +292,20 @@ class MolExpr(pl.Expr):
             is_elementwise=True,
         )
 
+    def has_stereo(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        """Atom or double-bond stereo is specified (pl.Boolean); CAPRICHO notes it before stereo removal."""
+        raise NotImplementedError
+
+    def num_undefined_stereocenters(
+        self, parallel: bool = False, dedup: bool = False
+    ) -> pl.Expr:
+        """Stereocenters with unspecified chirality (pl.Int32), as CAPRICHO `find_undefined_stereocenters`."""
+        raise NotImplementedError
+
+    def num_fragments(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        """Disconnected fragments (pl.Int32); > 1 after `get_parent` is a mixture."""
+        raise NotImplementedError
+
     def to_mol_objects(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert to actual Chem.Mol objects. Cannot be written to parquet"""
         return self._apply(_binary_to_mol, pl.Object, parallel, dedup)
