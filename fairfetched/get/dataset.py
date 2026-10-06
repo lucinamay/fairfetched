@@ -303,20 +303,43 @@ class Chembl(_Base):
     """ChEMBL wrapper: download once, then read lazily.
 
     ``Chembl.from_latest()`` (or ``Chembl.from_version(35)``) downloads a real
-    release. ``Chembl.demo()`` returns a tiny offline sample with the same API,
-    used by the examples here:
+    release. ``Chembl.demo()`` returns a tiny offline sample with the same API.
 
-    >>> from fairfetched.get import Chembl
-    >>> db = Chembl.demo()
-    >>> db.view.compounds.collect().shape                    # joined domain views
-    (5, 50)
-    >>> db.view.bioactivity.filter(assay_id=54505).sink_csv('my_bioactivity_data.csv')
-    >>> db.tables.molecule_dictionary.filter(molregno=1280).collect()["pref_name"].to_list()
-    ['ASPIRIN']
-    >>> db.tables.molecule_dictionary.collect_schema().names()[:4]  # column names, no scan
-    ['molregno', 'pref_name', 'chembl_id', 'max_phase']
-    >>> len(db.lfs)                                          # every raw table
-    26
+    Examples:
+        >>> from fairfetched.get import Chembl
+        >>> db = Chembl.demo()
+        >>> len(db.lfs["activities"].collect_schema())  # all columns
+        29
+        >>> db.lfs["activities"].collect_schema().names()[:4]  # column names
+        ['molregno', 'activity_id', 'assay_id', 'doc_id']
+        >>> db.tables.molecule_dictionary.filter(molregno=1280).collect()["pref_name"].to_list()
+        ['ASPIRIN']
+        >>> db.view.compounds.collect().shape
+        (5, 50)
+        >>> len(db.lfs)
+        26
+
+    Selecting and viewing table outputs:
+
+        >>> db.lfs["activities"].filter(molregno=1280).select(  # doctest: +SKIP
+        ...     "activity_id", "assay_id", "standard_value"
+        ... ).head(3).collect()  # doctest: +SKIP
+        shape: (3, 3)
+        ┌─────────────┬──────────┬────────────────┐
+        │ activity_id ┆ assay_id ┆ standard_value │
+        │ ---         ┆ ---      ┆ ---            │
+        │ i64         ┆ i64      ┆ f64            │
+        ╞═════════════╪══════════╪════════════════╡
+        │ ...         ┆ ...      ┆ ...            │
+        └─────────────┴──────────┴────────────────┘
+
+    Joining activities with compound structures:
+
+        >>> result = db.lfs["activities"].join(  # doctest: +SKIP
+        ...     db.lfs["compound_structures"], on="molregno", how="left", validate="m:1"
+        ... ).head().collect()  # doctest: +SKIP
+        >>> result.shape  # doctest: +SKIP
+        (5, 32)
     """
 
     module: DatasetGetModule = chembl

@@ -76,7 +76,7 @@ wheels = [
 [[package]]
 name = "fairfetched"
 version = "0.1.0a20260906"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
     { name = "polars" },
@@ -139,12 +139,12 @@ dev = [
 requires-dist = [
     { name = "chembl-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=1.2.4" },
     { name = "duckdb", specifier = ">=1.5.5" },
-    { name = "fairfetched", extras = ["adrecs"], marker = "extra == 'dev'", virtual = "." },
-    { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", virtual = "." },
-    { name = "fairfetched", extras = ["rough"], marker = "extra == 'dev'", virtual = "." },
-    { name = "fairfetched", extras = ["split"], marker = "extra == 'dev'", virtual = "." },
-    { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'", virtual = "." },
-    { name = "fairfetched", extras = ["toxcast"], marker = "extra == 'dev'", virtual = "." },
+    { name = "fairfetched", extras = ["adrecs"], marker = "extra == 'dev'", editable = "." },
+    { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", editable = "." },
+    { name = "fairfetched", extras = ["rough"], marker = "extra == 'dev'", editable = "." },
+    { name = "fairfetched", extras = ["split"], marker = "extra == 'dev'", editable = "." },
+    { name = "fairfetched", extras = ["standardise"], marker = "extra == 'dev'", editable = "." },
+    { name = "fairfetched", extras = ["toxcast"], marker = "extra == 'dev'", editable = "." },
     { name = "fastexcel", marker = "extra == 'adrecs'", specifier = ">=0.12" },
     { name = "fastexcel", marker = "extra == 'toxcast'", specifier = ">=0.12" },
     { name = "nanoom", marker = "extra == 'split'", specifier = ">=0.1.0a20260815" },
@@ -163,8 +163,8 @@ provides-extras = ["track", "adrecs", "toxcast", "rdkit", "standardise", "split"
 [package.metadata.requires-dev]
 dev = [
     { name = "chembl-structure-pipeline", specifier = ">=1.2.4" },
-    { name = "fairfetched", extras = ["rough"], virtual = "." },
-    { name = "fairfetched", extras = ["split"], virtual = "." },
+    { name = "fairfetched", extras = ["rough"], editable = "." },
+    { name = "fairfetched", extras = ["split"], editable = "." },
     { name = "fastexcel", specifier = ">=0.12" },
     { name = "papyrus-structure-pipeline", specifier = ">=0.0.5" },
     { name = "pyright", specifier = ">=1.1.414" },
