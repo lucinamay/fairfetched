@@ -3,7 +3,6 @@ import pytest
 from rdkit.Chem import Mol
 from rdkit.Chem.rdmolops import RemoveAllHs
 
-# import fairfetched.standardization.mol_expr  # ensure namespace registration #ty: ignore[ruff-f401]
 from fairfetched.standardize import mol_expr as me
 from fairfetched.standardize.mol_expr import MolExpr
 from fairfetched.standardize.mol_functions import remove_stereo

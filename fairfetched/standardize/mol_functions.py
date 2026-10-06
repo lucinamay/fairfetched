@@ -47,14 +47,14 @@ def safe_step_function(
     """
 
     def deco(func: Callable[P, T | None]) -> Callable[P, T | None]:
-        step = name or func.__name__
+        step = name or getattr(func, "__name__", repr(func))
 
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
-            if not args or args[0] is None:
+            if (args[0] if args else None) is None:
                 return None
             try:
-                return func(*args, **kwargs)  # pyright: ignore[reportCallIssue]
+                return func(*args, **kwargs)
             except Exception:
                 logger.exception("Failure at step '%s'", step)
                 return None

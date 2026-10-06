@@ -1,24 +1,26 @@
 import logging as lg
 
+logger = lg.getLogger(__name__)
+
 try:
     from chembl_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
-        get_parent_mol as chembl_get_parent_mol,
+        get_parent_mol as chembl_get_parent_mol,  # pyright: ignore[reportAssignmentType]
     )
     from chembl_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
-        standardize_mol as _chembl_standardize,
+        standardize_mol as _chembl_standardize,  # pyright: ignore[reportAssignmentType]
     )
 except ImportError as e:
-    lg.warning("""
+    logger.warning("""
         you should install chembl_structure_pipeline if you want
         to use chembl standardisation
         """)
     CHEMBL_IMPORT_ERROR = e
 
-    def chembl_get_parent_mol(mol):
+    def chembl_get_parent_mol(m, neutralize=True, check_exclusion=True, verbose=False):
         """placeholder for chembl_structure_pipeline.get_parent_mol in case
         the import doesn't work.
         raises respective import error when called"""
-        lg.warning("""
+        logger.warning("""
             please install `chembl_structure_pipeline` if you want to use
             ChEMBL standardisation
             """)
@@ -30,7 +32,7 @@ except ImportError as e:
 
         raises respective import error when called.
         """
-        lg.warning("""
+        logger.warning("""
             please install `chembl_structure_pipeline` if you want to use
             ChEMBL standardisation
             """)
@@ -39,7 +41,7 @@ except ImportError as e:
 
 try:
     from papyrus_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
-        standardize as _papyrus_standardize,
+        standardize as _papyrus_standardize,  # pyright: ignore[reportAssignmentType]
     )
 
 
@@ -49,7 +51,7 @@ except ImportError as e:
     def _papyrus_standardize(mol, **kwargs):
         """placeholder for papyrus_standardize in case imports dont work.
         raises respective import error when called"""
-        lg.warning("""
+        logger.warning("""
             please install `papyrus_structure_pipeline` if you want to use
             Papyrus standardisation
             """)
