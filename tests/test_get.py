@@ -355,15 +355,37 @@ class TestChemblCompose:
         result = chembl.build_views(sample_chembl_parquets)
         bioactivity: pl.DataFrame = result["bioactivity"].collect()
 
-        assert len(bioactivity) == 3  # no fan-out
+        assert len(bioactivity) == 4  # no fan-out
         assert "molregno" in bioactivity.columns
         assert "pchembl_value" in bioactivity.columns
         assert "assay_id" in bioactivity.columns
         assert "tid" in bioactivity.columns  # target via assays.tid
-        assert "pref_name" in bioactivity.columns  # from target_dictionary
+        assert "pref_name_tgt" in bioactivity.columns  # from target_dictionary
+        assert "molecule_chembl_id" in bioactivity.columns
+        assert "assay_chembl_id" in bioactivity.columns
+        assert "target_chembl_id" in bioactivity.columns
+        assert "canonical_smiles" in bioactivity.columns
+        assert "accessions" in bioactivity.columns  # target components, no fan-out
         assert "pubmed_id" in bioactivity.columns  # from docs
         # activities.doc_id null is backfilled from assays.doc_id
         assert bioactivity["pubmed_id"].null_count() == 0
+
+    def test_compound_target_pair_keeps_several_assay_types(
+        self, sample_chembl_parquets
+    ):
+        """Grouping on molecule and target must show every assay type measured on
+        the pair. The identifiers are named per entity, so grouping cannot
+        silently collapse to one assay (which has a single type)."""
+        bioactivity = chembl.build_views(sample_chembl_parquets)["bioactivity"]
+        pair = (
+            bioactivity.group_by("molecule_chembl_id", "target_chembl_id")
+            .agg(pl.col("assay_type").unique(), pl.col("assay_chembl_id").unique())
+            .filter(molecule_chembl_id="CHEMBL1", target_chembl_id="CHEMBL3199")
+            .collect()
+        )
+
+        assert sorted(pair["assay_type"].item()) == ["B", "F"]
+        assert sorted(pair["assay_chembl_id"].item()) == ["CHEMBL1000", "CHEMBL1003"]
 
     def test_compounds_composition_includes_structures(self, sample_chembl_parquets):
         """Compounds should include structures, properties, parent hierarchy and
@@ -670,7 +692,7 @@ class TestChemblCompositionHelpers:
         collected: pl.DataFrame = chembl._bioactivities(lfs).collect()
 
         assert "molregno" in collected.columns
-        assert "pref_name" in collected.columns  # from target_dictionary
+        assert "pref_name_tgt" in collected.columns  # from target_dictionary
         assert "tid" in collected.columns
 
     def test_bioactivities_includes_assay_info(self, sample_chembl_parquets):
@@ -700,13 +722,14 @@ class TestChemblCompositionHelpers:
         assert "doc_id" not in collected.columns
 
     def test_components_domain_hierarchy(self, sample_chembl_parquets):
-        """_components should include component, class, and domain hierarchy."""
+        """_components should stay one row per component, domains as a list."""
         lfs = chembl.cleanly_scan_parquet_tables(sample_chembl_parquets)
         collected: pl.DataFrame = chembl._components(lfs).collect()
 
         assert "component_id" in collected.columns
-        assert "domain_id" in collected.columns
+        assert "domains" in collected.columns
         assert "protein_classes" in collected.columns
+        assert collected["component_id"].n_unique() == len(collected)
 
     def test_targets_expands_components(self, sample_chembl_parquets):
         """_targets should expand a complex target to its components."""

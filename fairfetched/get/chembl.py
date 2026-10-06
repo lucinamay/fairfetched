@@ -127,7 +127,7 @@ _REQUIRED = (
     "variant_sequences",
     "docs",
     "source",
-    # compounds
+    # compounds (incl. molecule_dictionary.molecule_chembl_id and compound_structures.structure)
     "molecule_dictionary",
     "compound_structures",
     "compound_properties",
@@ -217,39 +217,102 @@ def _structural_alerts(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     )
 
 
-def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
-    """One row per activity: the measurement plus its assay, target, document
-    and data-source context.
+def _domain_names(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+    """One row per ``component_id`` with its structural-domain names as a list."""
+    cd = lfs["component_domains"].join(
+        lfs["domains"], on="domain_id", how="left", suffix="_dom", validate="m:1"
+    )
+    return cd.group_by("component_id").agg(
+        pl.col("domain_name").unique().alias("domains")
+    )
 
-    Path to the target is ``activities.assay_id -> assays.tid ->
-    target_dictionary`` (``activities`` itself carries no target). Kept at
-    ``target_dictionary`` (tid) granularity; join the ``proteins`` view on
-    ``tid`` for sequence/accession-level detail (that join fans out for
-    multi-component targets).
+
+def _target_accessions(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+    """One row per ``tid`` with the UniProt accessions of its protein components
+    as a list, so the bioactivity view carries the PCM protein identifier without
+    fanning out.
+
+    - ``SINGLE PROTEIN`` targets: one accession
+        - except 3 of ChEMBL 37's 11055 do not -> one lists three, two have no component row
+    - complexes and families: several
+    - targets without protein component (cell lines, tissues, ADMET): absent
+    """
+    tc = lfs["target_components"].join(
+        lfs["component_sequences"].select("component_id", "accession"),
+        on="component_id",
+        how="left",
+        validate="m:1",
+    )
+    return tc.group_by("tid").agg(
+        pl.col("accession").drop_nulls().unique().alias("accessions")
+    )
+
+
+def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+    """One row per activity: the measurement plus its compound, assay, target,
+    document and data-source context.
+
+    Every ChEMBL table has `chembl_id`, a `description` and a
+    `pref_name` => renamed instead of suffixed
+    - the four identifiers - ChEMBL site-style
+        -`molecule_chembl_id`
+        -`assay_chembl_id`
+        -`target_chembl_id`
+        -`document_chembl_id`
+
+    Path to the target is `activities.assay_id -> assays.tid ->
+    `target_dictionary` (`activities` itself carries no target). Kept at one
+    row per `activity_id`: `accessions` lists the UniProt accessions of the
+    target's components instead of fanning out, and `canonical_smiles` /
+    `standard_inchi_key` come from the 1:1 `compound_structures`. Join the
+    `proteins` view on `tid` for per-component sequence detail.
     """
     out = lfs["activities"].join(
         lfs["compound_records"].select("record_id", "compound_key", "compound_name"),
         on="record_id",
         how="left",
-        suffix="_rec",
         validate="m:1",
     )
     out = out.join(
-        lfs["action_type"],
+        lfs["molecule_dictionary"]
+        .select("molregno", "chembl_id")
+        .rename({"chembl_id": "molecule_chembl_id"}),
+        on="molregno",
+        how="left",
+        validate="m:1",
+    )
+    out = out.join(
+        lfs["compound_structures"].select(
+            "molregno", "canonical_smiles", "standard_inchi_key"
+        ),
+        on="molregno",
+        how="left",
+        validate="m:1",
+    )
+    out = out.join(
+        lfs["action_type"].rename({"description": "description_action"}),
         on="action_type",
         how="left",
-        suffix="_action",
         validate="m:1",
     )
     out = out.join(
         lfs["ligand_eff"].select("activity_id", "bei", "sei", "le", "lle"),
         on="activity_id",
         how="left",
-        suffix="_le",
         validate="m:1",
     )
     out = out.join(
-        lfs["assays"], on="assay_id", how="left", suffix="_assay", validate="m:1"
+        lfs["assays"].rename(
+            {
+                "chembl_id": "assay_chembl_id",
+                "description": "description_assay",
+                "doc_id": "doc_id_assay",
+                "src_id": "src_id_assay",
+            }
+        ),
+        on="assay_id",
+        how="left",
+        validate="m:1",
     )
     # activities.doc_id / src_id are nullable; assays always has them.
     out = out.with_columns(
@@ -260,33 +323,32 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
         lfs["assay_type"],
         on="assay_type",
         how="left",
-        suffix="_atype",
         validate="m:1",
     )
     out = out.join(
-        lfs["confidence_score_lookup"],
+        lfs["confidence_score_lookup"].rename({"description": "description_conf"}),
         on="confidence_score",
         how="left",
-        suffix="_conf",
         validate="m:1",
     )
     out = out.join(
         lfs["relationship_type"],
         on="relationship_type",
         how="left",
-        suffix="_rel",
         validate="m:1",
     )
     out = out.join(
-        lfs["variant_sequences"].select("variant_id", "mutation", "accession"),
+        lfs["variant_sequences"]
+        .select("variant_id", "mutation", "accession")
+        .rename({"accession": "variant_accession"}),
         on="variant_id",
         how="left",
-        suffix="_var",
         validate="m:1",
     )
     # target reached through assays.tid (activities carries no target).
     out = out.join(
-        lfs["target_dictionary"].select(
+        lfs["target_dictionary"]
+        .select(
             "tid",
             "pref_name",
             "target_type",
@@ -294,14 +356,23 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
             "tax_id",
             "chembl_id",
             "species_group_flag",
+        )
+        .rename(
+            {
+                "pref_name": "pref_name_tgt",
+                "organism": "organism_tgt",
+                "tax_id": "tax_id_tgt",
+                "chembl_id": "target_chembl_id",
+            }
         ),
         on="tid",
         how="left",
-        suffix="_tgt",
         validate="m:1",
     )
+    out = out.join(_target_accessions(lfs), on="tid", how="left", validate="m:1")
     out = out.join(
-        lfs["docs"].select(
+        lfs["docs"]
+        .select(
             "doc_id",
             "journal",
             "year",
@@ -310,17 +381,17 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
             "chembl_id",
             "title",
             "doc_type",
-        ),
+            "chembl_release_id",  # CAPRICHO filters activities by release
+        )
+        .rename({"chembl_id": "document_chembl_id"}),
         on="doc_id",
         how="left",
-        suffix="_doc",
         validate="m:1",
     )
     out = out.join(
         lfs["source"].select("src_id", "src_description", "src_short_name"),
         on="src_id",
         how="left",
-        suffix="_src",
         validate="m:1",
     )
     return out
@@ -390,9 +461,9 @@ def _targets(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
 
 
 def _components(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
-    """Component-centric protein view: ``component_sequences`` with its
-    family classes, gene symbols and structural domains. Independent of
-    ``target_dictionary`` — join on ``component_id`` to reach targets.
+    """One row per `component_id`: `component_sequences` with its family
+    classes, gene symbols and structural domains, each as a list. Independent of
+    `target_dictionary` — join on `component_id` to reach targets.
     """
     out = lfs["component_sequences"].join(
         _protein_classes(lfs),
@@ -408,8 +479,11 @@ def _components(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
         suffix="_syn",
         validate="1:1",
     )
-    cd = lfs["component_domains"].join(
-        lfs["domains"], on="domain_id", how="left", suffix="_dom", validate="m:1"
+    out = out.join(
+        _domain_names(lfs),
+        on="component_id",
+        how="left",
+        suffix="_dom",
+        validate="1:1",
     )
-    out = out.join(cd, on="component_id", how="left", suffix="_cd")
     return out

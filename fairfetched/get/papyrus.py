@@ -106,7 +106,7 @@ def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:
         )
         .unique(("inchikey", "inchi")),  # no 'connectivity' for with-stereo-papyrus
         "full": lfs["bioactivity"].join(
-            lfs["protein"],
+            lfs["protein"].rename({"tid": "tid_protein"}, strict=False),
             on="target_id",
             how="left",
             maintain_order="left",
