@@ -54,7 +54,7 @@ def safe_step_function(
             if not args or args[0] is None:
                 return None
             try:
-                return func(*args, **kwargs)
+                return func(*args, **kwargs)  # pyright: ignore[reportCallIssue]
             except Exception:
                 logger.exception("Failure at step '%s'", step)
                 return None
@@ -179,27 +179,27 @@ def _inchi_to_binary(s: str) -> bytes | None:
 
 @safe_step
 def _binary_to_smiles(b: bytes | None) -> str | None:
-    return MolToSmiles(Mol(b))  # ty: ignore[no-matching-overload]
+    return MolToSmiles(Mol(b))  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step
 def _binary_to_kekulized_smiles(b: bytes | None) -> str | None:
-    return MolToSmiles(Mol(b), kekuleSmiles=True, isomericSmiles=False)  # ty: ignore[no-matching-overload]
+    return MolToSmiles(Mol(b), kekuleSmiles=True, isomericSmiles=False)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step
 def _binary_to_inchi(b: bytes | None) -> str | None:
-    return MolToInchi(Mol(b))  # ty: ignore[invalid-return-type, no-matching-overload]
+    return MolToInchi(Mol(b))  # ty: ignore[invalid-return-type, no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType, reportReturnType]
 
 
 @safe_step
 def _binary_to_inchi_and_auxinfo(b: bytes | None) -> str | None:
-    return Chem.inchi.MolToInchiAndAuxInfo(Mol(b))  # ty: ignore[no-matching-overload]
+    return Chem.inchi.MolToInchiAndAuxInfo(Mol(b))  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step
 def _binary_to_inchikey(b: bytes | None) -> str | None:
-    return Chem.inchi.MolToInchiKey(Mol(b))  # ty: ignore[no-matching-overload]
+    return Chem.inchi.MolToInchiKey(Mol(b))  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @dataclass(frozen=True)
@@ -218,7 +218,7 @@ class Descriptors:
 @safe_step
 def _binary_to_descriptors(b: bytes | None) -> Descriptors | None:
     """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as 'smiles')"""
-    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]
+    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
     inchi, auxinfo = MolToInchiAndAuxInfo(mol)
     return Descriptors(
         inchi=inchi,
@@ -232,19 +232,19 @@ def _binary_to_descriptors(b: bytes | None) -> Descriptors | None:
 def _binary_to_morgan_array(
     b: bytes | None, radius: int, fp_size: int, **kwargs
 ) -> NDArray[uint8] | None:
-    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]
+    mol = Chem.Mol(b)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
     gen = _get_morgan_generator(radius=radius, fp_size=fp_size, **kwargs)
     return gen.GetFingerprintAsNumPy(mol)
 
 
 @safe_step
 def _binary_to_mol(b: bytes | None) -> Mol | None:
-    return Mol(b)  # ty: ignore[no-matching-overload]
+    return Mol(b)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step
 def _num_atoms(b: bytes | None) -> int | None:
-    return Mol(b).GetNumAtoms()  # ty: ignore[no-matching-overload]
+    return Mol(b).GetNumAtoms()  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step
@@ -280,7 +280,7 @@ def _num_fragments(b: bytes | None) -> int | None:
 @safe_step
 def _binary_to_scaffold_smiles(b: bytes | None, generic: bool = False) -> str | None:
     """Bemis–Murcko scaffold SMILES; `generic=True` also makes atoms/bonds generic."""
-    scaffold = MurckoScaffold.GetScaffoldForMol(Mol(b))  # ty: ignore[no-matching-overload]
+    scaffold = MurckoScaffold.GetScaffoldForMol(Mol(b))  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
     if generic:
         scaffold = MurckoScaffold.MakeScaffoldGeneric(scaffold)
     return MolToSmiles(scaffold)
