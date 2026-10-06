@@ -249,7 +249,32 @@ def _num_atoms(b: bytes | None) -> int | None:
 
 @safe_step
 def _num_heavy_atoms(b: bytes | None) -> int | None:
-    return Mol(b).GetNumHeavyAtoms()  # ty: ignore[no-matching-overload]
+    return Mol(b).GetNumHeavyAtoms()  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
+
+
+@safe_step
+def _has_stereo(b: bytes | None) -> bool | None:
+    """SMILES changes when stereo is removed (CAPRICHO `flag_stereochemistry_removal`)."""
+    mol = Mol(b)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
+    flat = Mol(mol)
+    RemoveStereochemistry(flat)
+    return MolToSmiles(mol) != MolToSmiles(flat)
+
+
+@safe_step
+def _num_undefined_stereocenters(b: bytes | None) -> int | None:
+    """As CAPRICHO `find_undefined_stereocenters`: centers with CHI_UNSPECIFIED tag."""
+    mol = Mol(b)  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
+    centers = Chem.FindMolChiralCenters(
+        mol, includeUnassigned=True, useLegacyImplementation=False
+    )
+    unspecified = Chem.ChiralType.CHI_UNSPECIFIED
+    return sum(mol.GetAtomWithIdx(i).GetChiralTag() == unspecified for i, _ in centers)
+
+
+@safe_step
+def _num_fragments(b: bytes | None) -> int | None:
+    return len(Chem.GetMolFrags(Mol(b)))  # ty: ignore[no-matching-overload]  # pyright: ignore[reportCallIssue, reportArgumentType]
 
 
 @safe_step

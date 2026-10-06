@@ -5,9 +5,12 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from polars._typing import PolarsDataType
 
 from fairfetched.utils._track import track
 
@@ -23,9 +26,12 @@ from .mol_functions import (
     _binary_to_morgan_array,
     _binary_to_scaffold_smiles,
     _binary_to_smiles,
+    _has_stereo,
     _inchi_to_binary,
     _num_atoms,
+    _num_fragments,
     _num_heavy_atoms,
+    _num_undefined_stereocenters,
     _smiles_to_binary,
     _stable_hash64,
     get_parent,
@@ -56,7 +62,7 @@ _CTX = mp.get_context("spawn")
 def _map_nodedup(
     fn,
     series: pl.Series,
-    return_dtype: pl.DataTypeExpr | pl.DataType | Any,
+    return_dtype: "PolarsDataType",
     parallel: bool = False,
 ) -> pl.Series:
     if parallel:
@@ -88,7 +94,7 @@ def _map_nodedup(
 def _map(
     fn,
     series: pl.Series,
-    return_dtype: pl.DataTypeExpr | pl.DataType | Any,
+    return_dtype: "PolarsDataType",
     parallel: bool,
     dedup: bool = False,
 ) -> pl.Series:
@@ -112,7 +118,7 @@ class MolExpr(pl.Expr):
     # --- entry points ---
 
     @property
-    def _pyexpr(self):
+    def _pyexpr(self):  # pyright: ignore[reportIncompatibleVariableOverride]
         return self._expr._pyexpr
 
     @classmethod
@@ -252,7 +258,7 @@ class MolExpr(pl.Expr):
         dedup: bool = False,
     ) -> pl.Expr:
         """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as ‘smiles’)"""
-        dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]
+        dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
         fn = partial(_binary_to_descriptors)
         return self._apply(fn, dtype, parallel, dedup).struct.unnest()
 
@@ -294,17 +300,17 @@ class MolExpr(pl.Expr):
 
     def has_stereo(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """Atom or double-bond stereo is specified (pl.Boolean); CAPRICHO notes it before stereo removal."""
-        raise NotImplementedError
+        return self._apply(_has_stereo, pl.Boolean, parallel, dedup)
 
     def num_undefined_stereocenters(
         self, parallel: bool = False, dedup: bool = False
     ) -> pl.Expr:
         """Stereocenters with unspecified chirality (pl.Int32), as CAPRICHO `find_undefined_stereocenters`."""
-        raise NotImplementedError
+        return self._apply(_num_undefined_stereocenters, pl.Int32, parallel, dedup)
 
     def num_fragments(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """Disconnected fragments (pl.Int32); > 1 after `get_parent` is a mixture."""
-        raise NotImplementedError
+        return self._apply(_num_fragments, pl.Int32, parallel, dedup)
 
     def to_mol_objects(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert to actual Chem.Mol objects. Cannot be written to parquet"""
@@ -313,7 +319,7 @@ class MolExpr(pl.Expr):
     def to_custom(
         self,
         function: Callable,
-        return_dtype: pl.DataTypeExpr,
+        return_dtype: "PolarsDataType",
         parallel: bool = False,
         dedup: bool = False,
     ) -> pl.Expr:
