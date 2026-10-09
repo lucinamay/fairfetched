@@ -24,7 +24,7 @@ from typing import Any
 
 import polars as pl
 import pytest
-from rdkit import RDLogger
+from rdkit import rdBase
 from rdkit.Chem import AddHs, Mol, MolFromSmiles, MolToSmiles
 
 from fairfetched.prep import mol_expr as me
@@ -48,7 +48,7 @@ from fairfetched.prep.pipeline import (
     STEPS_PAPYRUS_NOSTEREO,
 )
 
-RDLogger.DisableLog("rdApp.*")
+rdBase.DisableLog("rdApp.*")
 
 pytest.importorskip("chembl_structure_pipeline")
 pytest.importorskip("papyrus_structure_pipeline")
@@ -299,8 +299,12 @@ class TestStereochemistry:
 
         assert chembl_key == row["chembl_inchikey"]
         assert papyrus_key == row["papyrus_inchikey"]
-        assert chembl_key.split("-")[1] != "UHFFFAOYSA"  # ChEMBL kept the centre
-        assert papyrus_key.split("-")[1] == "UHFFFAOYSA"  # Papyrus flattened it
+        assert (
+            row["chembl_inchikey"].split("-")[1] != "UHFFFAOYSA"
+        )  # ChEMBL kept the centre
+        assert (
+            row["papyrus_inchikey"].split("-")[1] == "UHFFFAOYSA"
+        )  # Papyrus flattened it
 
         warnings.warn(
             "STEPS_PAPYRUS discarded the (S) stereocentre of naproxen "
@@ -341,7 +345,10 @@ class TestStereochemistry:
         papyrus_key = keys([row["input_smiles"]], *STEPS_PAPYRUS)[0]
         assert chembl_key == row["chembl_inchikey"]
         assert papyrus_key == row["papyrus_inchikey"]
-        assert chembl_key.split("-")[0] != papyrus_key.split("-")[0]
+        assert (
+            row["chembl_inchikey"].split("-")[0]
+            != row["papyrus_inchikey"].split("-")[0]
+        )
 
 
 class TestFailureModes:
@@ -373,7 +380,7 @@ class TestFailureModes:
         with pytest.raises(AttributeError):
             df.with_columns(
                 MolExpr.from_smiles("smiles")
-                .standardize(lambda m: "not a mol")
+                .standardize(lambda m: "not a mol")  # pyright: ignore[reportArgumentType]
                 .alias("m")
             )
 

@@ -211,9 +211,13 @@ class TestCaprichoMolFlags:
 
     def test_against_capricho(self, out):
         pytest.importorskip("Capricho")
-        import pandas as pd
-        from Capricho.chembl.data_flag_functions import flag_stereochemistry_removal
-        from Capricho.core.stereo import find_undefined_stereocenters
+        import pandas as pd  # pyright: ignore[reportMissingImports]
+        from Capricho.chembl.data_flag_functions import (  # pyright: ignore[reportMissingImports]
+            flag_stereochemistry_removal,
+        )
+        from Capricho.core.stereo import (  # pyright: ignore[reportMissingImports]
+            find_undefined_stereocenters,
+        )
 
         undefined = [len(find_undefined_stereocenters(s)) for s in self.smiles]
         pdf = flag_stereochemistry_removal(pd.DataFrame({"s": list(self.smiles)}), "s")

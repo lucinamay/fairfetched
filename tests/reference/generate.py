@@ -30,10 +30,11 @@ import polars as pl
 import rdkit
 from chembl_structure_pipeline import standardize_mol
 from papyrus_structure_pipeline import standardize as papyrus_standardize
-from rdkit import Chem, RDLogger
-from rdkit.Chem import Descriptors
+from polars._typing import PolarsDataType
+from rdkit import Chem, rdBase
+from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 
-RDLogger.DisableLog("rdApp.*")
+rdBase.DisableLog("rdApp.*")
 
 OUT = Path(__file__).with_name("standardize_reference.csv")
 COMPOUND = "https://pubchem.ncbi.nlm.nih.gov/compound"
@@ -219,11 +220,13 @@ def papyrus(mol: Chem.Mol) -> Chem.Mol | None:
     (mixtures, inorganics, and by default anything outside 200-800 Da)."""
     try:
         return papyrus_standardize(Chem.Mol(mol))
-    except Exception:
+    except Exception:  # noqa: BLE001  # the library raises plain Exception for rejects
         return None
 
 
-def per_mol(fn: Callable[[Chem.Mol], Any], return_dtype: pl.DataType = pl.String) -> pl.Expr:
+def per_mol(
+    fn: Callable[[Chem.Mol], Any], return_dtype: PolarsDataType = pl.String
+) -> pl.Expr:
     """`fn` applied to each input SMILES parsed into a fresh Mol -- fresh
     because both pipelines mutate what they are handed."""
 
@@ -268,7 +271,7 @@ def build() -> pl.DataFrame:
         .with_columns(
             # exact MW of the input, same descriptor Papyrus filters on
             # (small_molecule_min_mw/max_mw in standardizer.py, default 200-800)
-            mol_weight=per_mol(Descriptors.ExactMolWt, return_dtype=pl.Float64),
+            mol_weight=per_mol(CalcExactMolWt, return_dtype=pl.Float64),
             # RDKit alone: the baseline a no-op pipeline would give
             rdkit_smiles=per_mol(Chem.MolToSmiles),
             rdkit_inchikey=per_mol(key),

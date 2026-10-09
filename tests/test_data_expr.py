@@ -357,7 +357,9 @@ class TestAgainstCapricho:
 
     @pytest.mark.parametrize("seed", range(3))
     def test_unit_annotation_errors(self, seed):
-        from Capricho.chembl.processing import curate_activity_pairs
+        from Capricho.chembl.processing import (  # pyright: ignore[reportMissingImports]
+            curate_activity_pairs,
+        )
 
         df = _frame(seed)
         pdf = curate_activity_pairs(df.to_pandas(), MOL, ASSAY, VALUE)
@@ -370,7 +372,9 @@ class TestAgainstCapricho:
         strict=True, reason="CAPRICHO casts pchembl_value to float32 before pairing"
     )
     def test_unit_annotation_errors_after_float32_cast(self):
-        from Capricho.chembl.processing import curate_activity_pairs
+        from Capricho.chembl.processing import (  # pyright: ignore[reportMissingImports]
+            curate_activity_pairs,
+        )
 
         df = pl.DataFrame({MOL: ["M1", "M1"], ASSAY: ["A1", "A2"], VALUE: [6.55, 3.55]})
         pdf = df.to_pandas().astype({VALUE: "float32"})
@@ -381,7 +385,9 @@ class TestAgainstCapricho:
         )
 
     def _cross_document(self, df: pl.DataFrame):
-        from Capricho.chembl.data_flag_functions import flag_inter_document_duplication
+        from Capricho.chembl.data_flag_functions import (  # pyright: ignore[reportMissingImports]
+            flag_inter_document_duplication,
+        )
 
         pdf = flag_inter_document_duplication(
             df.to_pandas(), key_subset=list(KEYS), diff_subset=[DOC]
@@ -402,7 +408,9 @@ class TestAgainstCapricho:
         self._cross_document(_frame(0, n_mols=6))
 
     def _overlap(self, df: pl.DataFrame, min_overlap: int):
-        from Capricho.chembl.data_flag_functions import flag_insufficient_assay_overlap
+        from Capricho.chembl.data_flag_functions import (  # pyright: ignore[reportMissingImports]
+            flag_insufficient_assay_overlap,
+        )
 
         pdf = flag_insufficient_assay_overlap(
             df.to_pandas(), min_overlap, MOL, ASSAY, TARGET
@@ -447,7 +455,9 @@ class TestAgainstCapricho:
         self._overlap(df, 1)
 
     def test_row_flags(self):
-        from Capricho.chembl import data_flag_functions as cf
+        from Capricho.chembl import (  # pyright: ignore[reportMissingImports]
+            data_flag_functions as cf,
+        )
 
         df = TestRowFlags.df.rename({"description_assay": "assay_description"})
         cases = [
