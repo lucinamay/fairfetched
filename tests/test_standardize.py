@@ -24,7 +24,7 @@ TEST_DF = pl.DataFrame(
 def basic_test():
     df = pl.DataFrame({"name": "mymol", "smiles": "CCCCCO"})
 
-    df.with_columns(
+    _ = df.with_columns(
         pl.col("smiles")  # ty: ignore[unresolved-attribute]
         .mol.from_smiles()  # pyright: ignore[reportAttributeAccessIssue]
         .mol.standardise(*me.STEPS_CHEMBL)

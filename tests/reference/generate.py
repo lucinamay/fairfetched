@@ -220,7 +220,7 @@ def papyrus(mol: Chem.Mol) -> Chem.Mol | None:
     (mixtures, inorganics, and by default anything outside 200-800 Da)."""
     try:
         return papyrus_standardize(Chem.Mol(mol))
-    except Exception:  # noqa: BLE001  # the library raises plain Exception for rejects
+    except Exception:  # noqa: BLE001
         return None
 
 
