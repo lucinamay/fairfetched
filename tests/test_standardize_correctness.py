@@ -1,4 +1,4 @@
-"""Chemistry correctness tests for `fairfetched.standardize`.
+"""Chemistry correctness tests for `fairfetched.prep`.
 
 `test_standardize.py` covers plumbing: does an expression build, is the dtype
 right, is the column non-null. Those tests all pass if `standardize()` quietly
@@ -24,31 +24,30 @@ from typing import Any
 
 import polars as pl
 import pytest
-from rdkit import RDLogger
+from rdkit import rdBase
 from rdkit.Chem import AddHs, Mol, MolFromSmiles, MolToSmiles
 
-from fairfetched.standardize import mol_expr as me
-from fairfetched.standardize.mol_expr import MolExpr
-from fairfetched.standardize.mol_functions import (
+from fairfetched.prep import mol_expr as me
+from fairfetched.prep.mol_expr import MolExpr
+from fairfetched.prep.mol_functions import (
     MolFn,
     _binary_to_inchikey,
     chembl_standardize,
     no_mixtures,
     only_organic,
-    papyrus_standardize,
     remove_stereo,
     safe_step,
     valid_inchi,
     via_inchi,
 )
-from fairfetched.standardize.pipeline import (
+from fairfetched.prep.pipeline import (
     STEPS_CHEMBL_PARENT,
     STEPS_PAPYRUS,
     STEPS_PAPYRUS_ANY_SIZE,
     STEPS_PAPYRUS_NOSTEREO,
 )
 
-RDLogger.DisableLog("rdApp.*")
+rdBase.DisableLog("rdApp.*")
 
 pytest.importorskip("chembl_structure_pipeline")
 pytest.importorskip("papyrus_structure_pipeline")
@@ -299,8 +298,12 @@ class TestStereochemistry:
 
         assert chembl_key == row["chembl_inchikey"]
         assert papyrus_key == row["papyrus_inchikey"]
-        assert chembl_key.split("-")[1] != "UHFFFAOYSA"  # ChEMBL kept the centre
-        assert papyrus_key.split("-")[1] == "UHFFFAOYSA"  # Papyrus flattened it
+        assert (
+            row["chembl_inchikey"].split("-")[1] != "UHFFFAOYSA"
+        )  # ChEMBL kept the centre
+        assert (
+            row["papyrus_inchikey"].split("-")[1] == "UHFFFAOYSA"
+        )  # Papyrus flattened it
 
         warnings.warn(
             "STEPS_PAPYRUS discarded the (S) stereocentre of naproxen "
@@ -341,7 +344,10 @@ class TestStereochemistry:
         papyrus_key = keys([row["input_smiles"]], *STEPS_PAPYRUS)[0]
         assert chembl_key == row["chembl_inchikey"]
         assert papyrus_key == row["papyrus_inchikey"]
-        assert chembl_key.split("-")[0] != papyrus_key.split("-")[0]
+        assert (
+            row["chembl_inchikey"].split("-")[0]
+            != row["papyrus_inchikey"].split("-")[0]
+        )
 
 
 class TestFailureModes:
@@ -373,24 +379,19 @@ class TestFailureModes:
         with pytest.raises(AttributeError):
             df.with_columns(
                 MolExpr.from_smiles("smiles")
-                .standardize(lambda m: "not a mol")
+                .standardize(lambda m: "not a mol")  # pyright: ignore[reportArgumentType]
                 .alias("m")
             )
 
-    def test_wrapped_and_unwrapped_steps_fail_differently(self) -> None:
-        """`STEPS_CHEMBL` holds the `safe_step`-wrapped `chembl_standardize`,
-        while `STEPS_PAPYRUS` holds the raw `_papyrus_standardize` straight from
-        `_optional.py`. So the same kind of failure nulls the column in one
-        pipeline and kills the query in the other.
-        `mol_functions.papyrus_standardize` is the wrapped version and nothing
-        imports it.
-
-        TODO: pick one. Either wrap both (consistent, silent) or neither
-        (consistent, loud); the current split means error handling depends on
-        which pipeline you picked.
-        """
+    def test_list_steps_are_wrapped_and_custom_steps_are_not(self) -> None:
+        """Every step in the shipped lists is `safe_step`-wrapped, so a failing
+        molecule nulls its row; a raw custom step still raises and kills the
+        query."""
         assert me.STEPS_CHEMBL[0] is chembl_standardize
-        assert STEPS_PAPYRUS[-1] is not papyrus_standardize
+        assert STEPS_PAPYRUS == me.STEPS_PAPYRUS_STANDARDIZE
+        for step in STEPS_PAPYRUS + STEPS_PAPYRUS_NOSTEREO + STEPS_PAPYRUS_ANY_SIZE:
+            function = getattr(step, "func", step)  # partial-built steps
+            assert hasattr(function, "__wrapped__"), step  # set by safe_step's wraps
 
         def boom(mol):
             raise RuntimeError("standardization failed")
@@ -428,7 +429,7 @@ class TestFailureModes:
         TODO: let ImportError through in `safe_step`, or check for the
         placeholder when a pipeline is built rather than per molecule.
         """
-        import fairfetched.standardize.mol_functions as mf
+        import fairfetched.prep.mol_functions as mf
 
         def missing_dependency(mol, *args, **kwargs):
             raise ImportError("chembl_structure_pipeline not installed")

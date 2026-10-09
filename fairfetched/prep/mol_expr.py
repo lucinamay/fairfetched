@@ -5,13 +5,21 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING
 
 import polars as pl
 
-from fairfetched.utils._track import track
+if TYPE_CHECKING:
+    from polars._typing import PolarsDataType
 
-from .mol_functions import (
+from fairfetched.prep.failures import (
+    CallSite,
+    call_collecting,
+    call_in_context,
+    callsite,
+    reemit,
+)
+from fairfetched.prep.mol_functions import (
     Descriptors,
     MolFn,
     _binary_to_descriptors,
@@ -23,23 +31,30 @@ from .mol_functions import (
     _binary_to_morgan_array,
     _binary_to_scaffold_smiles,
     _binary_to_smiles,
+    _has_stereo,
     _inchi_to_binary,
     _num_atoms,
+    _num_fragments,
     _num_heavy_atoms,
+    _num_undefined_stereocenters,
     _smiles_to_binary,
     _stable_hash64,
     get_parent,
     mw_between,
     remove_stereo,
 )
-from .pipeline import (
+from fairfetched.prep.pipeline import (
     STEPS_CHEMBL,
+    STEPS_CHEMBL_GET_PARENT_MOL,
     STEPS_CHEMBL_PARENT,
+    STEPS_CHEMBL_STANDARDIZE_MOL,
     STEPS_PAPYRUS,
     STEPS_PAPYRUS_ANY_SIZE,
     STEPS_PAPYRUS_NOSTEREO,
+    STEPS_PAPYRUS_STANDARDIZE,
     MolPipeline,
 )
+from fairfetched.utils._track import track
 
 logger = logging.getLogger(__name__)
 
@@ -56,23 +71,33 @@ _CTX = mp.get_context("spawn")
 def _map_nodedup(
     fn,
     series: pl.Series,
-    return_dtype: pl.DataTypeExpr | pl.DataType | Any,
+    return_dtype: "PolarsDataType",
     parallel: bool = False,
+    site: CallSite | None = None,
 ) -> pl.Series:
+    """`fn` per element, each call in a failure-record context naming the
+    element and `site` (the user line that built the expression)."""
+    site = site or callsite()
     if parallel:
         try:
             mp.set_start_method(
                 "spawn", force=True
             )  # @TODO: check where else to put this that is not the main module
             with ProcessPoolExecutor(_N_WORKERS, mp_context=_CTX) as pool:
-                results = list(
+                pairs = list(
                     track(
-                        pool.map(fn, series.to_list(), chunksize=256),
+                        pool.map(
+                            partial(call_collecting, fn, site),
+                            series.to_list(),
+                            chunksize=256,
+                        ),
                         desc=getattr(fn, "__name__", ""),
                         total=len(series),
                     )
                 )
-            return pl.Series(series.name, results, dtype=return_dtype)
+            for _, failures in pairs:
+                reemit(failures)
+            return pl.Series(series.name, [r for r, _ in pairs], dtype=return_dtype)
         except Exception:
             logger.exception(
                 "'parallel' execution failed, resorting to native polars map_batches. "
@@ -80,7 +105,7 @@ def _map_nodedup(
             )
     return pl.Series(
         series.name,
-        tuple(map(fn, series)),
+        tuple(call_in_context(fn, site, x) for x in series),
         dtype=return_dtype,
     )
 
@@ -88,14 +113,15 @@ def _map_nodedup(
 def _map(
     fn,
     series: pl.Series,
-    return_dtype: pl.DataTypeExpr | pl.DataType | Any,
+    return_dtype: "PolarsDataType",
     parallel: bool,
     dedup: bool = False,
+    site: CallSite | None = None,
 ) -> pl.Series:
     if not dedup:
-        return _map_nodedup(fn, series, return_dtype, parallel=parallel)
+        return _map_nodedup(fn, series, return_dtype, parallel=parallel, site=site)
     unique = series.unique()
-    results = _map_nodedup(fn, unique, return_dtype, parallel=parallel)
+    results = _map_nodedup(fn, unique, return_dtype, parallel=parallel, site=site)
     mapping = pl.DataFrame({"k": unique, "v": results})
     return (
         series.to_frame("k").join(mapping, on="k", how="left")["v"].rename(series.name)
@@ -109,34 +135,49 @@ class MolExpr(pl.Expr):
 
     _expr: pl.Expr
     _parallel: bool = False
+    # user line that built the expression; every failure record cites it
+    _site: CallSite | None = None
+
+    def __post_init__(self) -> None:
+        if self._site is None:
+            object.__setattr__(self, "_site", callsite())
+
     # --- entry points ---
 
     @property
-    def _pyexpr(self):
+    def _pyexpr(self):  # pyright: ignore[reportIncompatibleVariableOverride]
         return self._expr._pyexpr
 
     @classmethod
     def from_smiles(
         cls, col: str = "smiles", parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
+        site = callsite()
         return cls(
             pl.col(col).map_batches(
-                lambda s, **_: _map(_smiles_to_binary, s, pl.Binary, parallel, dedup),
+                lambda s, **_: _map(
+                    _smiles_to_binary, s, pl.Binary, parallel, dedup, site
+                ),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
-            )
+            ),
+            _site=site,
         )
 
     @classmethod
     def from_inchi(
         cls, col: str = "inchi", parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
+        site = callsite()
         return cls(
             pl.col(col).map_batches(
-                lambda s, **_: _map(_inchi_to_binary, s, pl.Binary, parallel, dedup),
+                lambda s, **_: _map(
+                    _inchi_to_binary, s, pl.Binary, parallel, dedup, site
+                ),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
-            )
+            ),
+            _site=site,
         )
 
     @classmethod
@@ -144,13 +185,14 @@ class MolExpr(pl.Expr):
         cls, col: str = "mol", parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
         """Wrap an existing binary mol column."""
-        return cls(pl.col(col))
+        return cls(pl.col(col), _site=callsite())
 
     @classmethod
     def from_col_infer(
         cls, col: str, parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
         """Infer mol source from column dtype or first non-null value."""
+        site = callsite()
 
         def _infer(s: pl.Series, **_) -> pl.Series:
             if s.dtype == pl.Binary:
@@ -159,15 +201,16 @@ class MolExpr(pl.Expr):
             if first is None:
                 return s
             if isinstance(first, str) and first.startswith("InChI="):
-                return _map(_inchi_to_binary, s, pl.Binary, parallel, dedup)
-            return _map(_smiles_to_binary, s, pl.Binary, parallel, dedup)
+                return _map(_inchi_to_binary, s, pl.Binary, parallel, dedup, site)
+            return _map(_smiles_to_binary, s, pl.Binary, parallel, dedup, site)
 
         return cls(
             pl.col(col).map_batches(
                 _infer,
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
-            )
+            ),
+            _site=site,
         )
 
     # --- transforms ---
@@ -176,12 +219,14 @@ class MolExpr(pl.Expr):
         self, *steps: MolFn, parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
         pipeline = MolPipeline(steps=tuple(steps))
+        site = self._site
         return MolExpr(
             self._expr.map_batches(
-                lambda s, **_: _map(pipeline, s, pl.Binary, parallel, dedup),
+                lambda s, **_: _map(pipeline, s, pl.Binary, parallel, dedup, site),
                 return_dtype=pl.Binary,
                 is_elementwise=not parallel,
-            )
+            ),
+            _site=site,
         )
 
     def get_parent(
@@ -213,13 +258,14 @@ class MolExpr(pl.Expr):
         return self.standardize(mw_between(lo, hi), parallel=parallel, dedup=dedup)
 
     def alias(self, name: str) -> "MolExpr":
-        return MolExpr(self._expr.alias(name))
+        return MolExpr(self._expr.alias(name), _site=self._site)
 
     # --- 'sinks' ---
     def _apply(self, fn, dtype, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert objects within expression, with specifyable dtype"""
+        site = self._site
         return self._expr.map_batches(
-            lambda s, **_: _map(fn, s, dtype, parallel, dedup),
+            lambda s, **_: _map(fn, s, dtype, parallel, dedup, site),
             return_dtype=dtype,
             is_elementwise=not parallel,
         )
@@ -252,7 +298,7 @@ class MolExpr(pl.Expr):
         dedup: bool = False,
     ) -> pl.Expr:
         """returns inchi, inchi_auxinfo, inchikey, kekulised smiles (as ‘smiles’)"""
-        dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]
+        dtype = pl.Struct(Descriptors.dataclass_schema())  # ty:ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
         fn = partial(_binary_to_descriptors)
         return self._apply(fn, dtype, parallel, dedup).struct.unnest()
 
@@ -287,10 +333,24 @@ class MolExpr(pl.Expr):
     ) -> pl.Expr:
         """Dataset-independent cluster id per scaffold: stable 64-bit hash of the scaffold SMILES (pl.UInt64)."""
         return self.to_scaffold(generic, parallel, dedup).map_batches(
-            lambda s, **_: _map(_stable_hash64, s, pl.UInt64, False, dedup),
+            lambda s, **_: _map(_stable_hash64, s, pl.UInt64, False, dedup, self._site),
             return_dtype=pl.UInt64,
             is_elementwise=True,
         )
+
+    def has_stereo(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        """Atom or double-bond stereo is specified (pl.Boolean); CAPRICHO notes it before stereo removal."""
+        return self._apply(_has_stereo, pl.Boolean, parallel, dedup)
+
+    def num_undefined_stereocenters(
+        self, parallel: bool = False, dedup: bool = False
+    ) -> pl.Expr:
+        """Stereocenters with unspecified chirality (pl.Int32), as CAPRICHO `find_undefined_stereocenters`."""
+        return self._apply(_num_undefined_stereocenters, pl.Int32, parallel, dedup)
+
+    def num_fragments(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
+        """Disconnected fragments (pl.Int32); > 1 after `get_parent` is a mixture."""
+        return self._apply(_num_fragments, pl.Int32, parallel, dedup)
 
     def to_mol_objects(self, parallel: bool = False, dedup: bool = False) -> pl.Expr:
         """convert to actual Chem.Mol objects. Cannot be written to parquet"""
@@ -299,7 +359,7 @@ class MolExpr(pl.Expr):
     def to_custom(
         self,
         function: Callable,
-        return_dtype: pl.DataTypeExpr,
+        return_dtype: "PolarsDataType",
         parallel: bool = False,
         dedup: bool = False,
     ) -> pl.Expr:
@@ -308,9 +368,12 @@ class MolExpr(pl.Expr):
 
 __all__ = [
     "STEPS_CHEMBL",
+    "STEPS_CHEMBL_GET_PARENT_MOL",
     "STEPS_CHEMBL_PARENT",
+    "STEPS_CHEMBL_STANDARDIZE_MOL",
     "STEPS_PAPYRUS",
     "STEPS_PAPYRUS_ANY_SIZE",
     "STEPS_PAPYRUS_NOSTEREO",
+    "STEPS_PAPYRUS_STANDARDIZE",
     "MolExpr",
 ]

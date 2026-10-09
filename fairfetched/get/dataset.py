@@ -60,6 +60,12 @@ class _ChemblView(_View):
     def components(self) -> LazyFrame:
         return self._views["components"]
 
+    def capricho(self, **params) -> LazyFrame:
+        """`bioactivity` with CAPRICHO `drop_*` / `note_*` flags, scanned from a
+        cache parquet written on first call (see `fairfetched.get._capricho.flag`
+        for `params`)."""
+        raise NotImplementedError
+
 
 class _PapyrusView(_View):
     """``proteins`` and ``full`` mirror the raw Papyrus tables: Papyrus already

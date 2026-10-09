@@ -3,10 +3,9 @@ import pytest
 from rdkit.Chem import Mol
 from rdkit.Chem.rdmolops import RemoveAllHs
 
-# import fairfetched.standardization.mol_expr  # ensure namespace registration #ty: ignore[ruff-f401]
-from fairfetched.standardize import mol_expr as me
-from fairfetched.standardize.mol_expr import MolExpr
-from fairfetched.standardize.mol_functions import remove_stereo
+from fairfetched.prep import mol_expr as me
+from fairfetched.prep.mol_expr import MolExpr
+from fairfetched.prep.mol_functions import remove_stereo
 
 TEST_DF = pl.DataFrame(
     {
@@ -25,9 +24,9 @@ TEST_DF = pl.DataFrame(
 def basic_test():
     df = pl.DataFrame({"name": "mymol", "smiles": "CCCCCO"})
 
-    df.with_columns(
+    _ = df.with_columns(
         pl.col("smiles")  # ty: ignore[unresolved-attribute]
-        .mol.from_smiles()
+        .mol.from_smiles()  # pyright: ignore[reportAttributeAccessIssue]
         .mol.standardise(*me.STEPS_CHEMBL)
         .mol.to_kekulized_smiles()
         .alias("kekulised_smiles")
@@ -47,7 +46,7 @@ def test_namespace_on_binary_mol():
     # now use namespace methods on the binary mol column
     out = out.with_columns(
         pl.col("mol")  # ty: ignore[unresolved-attribute]
-        .mol.to_kekulized_smiles(parallel=False)
+        .mol.to_kekulized_smiles(parallel=False)  # pyright: ignore[reportAttributeAccessIssue]
         .alias("kekulised_smiles")
     )
 
@@ -72,7 +71,7 @@ def test_basic_kekulised_smiles_not_null():
 def test_basic_kekulised_smiles_not_null_lazy():
     df = pl.DataFrame({"name": ["mymol"] * 10, "smiles": ["CCCCCO"] * 10}).lazy()
     parallel = True
-    out: pl.DataFrame = df.with_columns( 
+    out: pl.DataFrame = df.with_columns(
         MolExpr.from_smiles("smiles", parallel)
         .standardize(*me.STEPS_CHEMBL, parallel=parallel)
         .to_kekulized_smiles(parallel)
@@ -178,3 +177,50 @@ def test_custom_pipe():
         MolExpr.from_smiles("smiles").standardize(my_func, parallel=True).alias("mol")
     )
     assert out.select(pl.col("mol").is_not_null().all()).item()
+
+
+class TestCaprichoMolFlags:
+    """Expected values follow from the structures; CAPRICHO's own functions
+    are compared when the `capricho` group is installed."""
+
+    smiles = ("C[C@H](N)O", "CC(N)O", "C/C=C/C", "CC.O", "CC(N)C(O)Cl")
+    # (R)-1-aminoethanol: defined center; racemic: one undefined center;
+    # (E)-but-2-ene: bond stereo only; ethane + water: 2 fragments;
+    # 2-amino-1-chloropropan-1-ol: two undefined centers
+    has_stereo = (True, False, True, False, False)
+    undefined = (0, 1, 0, 0, 2)
+    fragments = (1, 1, 1, 2, 1)
+
+    @pytest.fixture
+    def out(self) -> pl.DataFrame:
+        mol = MolExpr.col("mol")
+        return (
+            pl.DataFrame({"smiles": [*self.smiles, None]})
+            .with_columns(mol=MolExpr.from_smiles())
+            .select(
+                stereo=mol.has_stereo(),
+                undefined=mol.num_undefined_stereocenters(),
+                fragments=mol.num_fragments(),
+            )
+        )
+
+    def test_values(self, out):
+        assert out["stereo"].to_list() == [*self.has_stereo, None]
+        assert out["undefined"].to_list() == [*self.undefined, None]
+        assert out["fragments"].to_list() == [*self.fragments, None]
+
+    def test_against_capricho(self, out):
+        pytest.importorskip("Capricho")
+        import pandas as pd  # pyright: ignore[reportMissingImports]
+        from Capricho.chembl.data_flag_functions import (  # pyright: ignore[reportMissingImports]
+            flag_stereochemistry_removal,
+        )
+        from Capricho.core.stereo import (  # pyright: ignore[reportMissingImports]
+            find_undefined_stereocenters,
+        )
+
+        undefined = [len(find_undefined_stereocenters(s)) for s in self.smiles]
+        pdf = flag_stereochemistry_removal(pd.DataFrame({"s": list(self.smiles)}), "s")
+        stereo = pdf["data_processing_comment"].str.contains("Stereochemistry").tolist()
+        assert out["undefined"].to_list()[:-1] == undefined
+        assert out["stereo"].to_list()[:-1] == stereo

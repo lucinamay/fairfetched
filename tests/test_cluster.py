@@ -4,8 +4,8 @@ import pytest
 
 pytest.importorskip("nanoom")
 
-from fairfetched.standardize.cluster_expr import cluster
-from fairfetched.standardize.split_expr import kfold
+from fairfetched.prep.cluster_expr import cluster
+from fairfetched.prep.split_expr import kfold
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ class TestCluster:
         reaches it through `**kwargs`."""
         from sklearn.cluster import KMeans
 
-        expected = KMeans(n_clusters=4, random_state=1).fit(df["fp"].to_numpy()).labels_
+        expected = KMeans(n_clusters=4, random_state=1).fit_predict(df["fp"].to_numpy())
         out = df.select(c=cluster("fp", method="kmeans", n_clusters=4, random_state=1))[
             "c"
         ]
