@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, fields
@@ -31,17 +30,14 @@ from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 from rdkit.Chem.Scaffolds import MurckoScaffold
 
-from ._optional import (
+from fairfetched.prep import papyrus
+from fairfetched.prep._optional import (
     _chembl_standardize,
     chembl_exclude_flag,
     chembl_get_parent_mol,
     chembl_standardizer,
-    papyrus_standardizer,
 )
-
-# from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
-from ._optional import _papyrus_standardize as _papyrus_standardize_impl
-from .failures import record, warn
+from fairfetched.prep.failures import record, warn
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -179,11 +175,6 @@ def mw_between(lo: float | None = None, hi: float | None = None) -> MolFn:
     towards the mass, so a salt can pass or fail where its parent would not.
     """
     return partial(_mw_between, lo=lo, hi=hi)
-
-
-@safe_step
-def papyrus_standardize(mol, *args, **kwargs):
-    return _papyrus_standardize_impl(mol, *args, **kwargs)
 
 
 @safe_step
@@ -339,37 +330,21 @@ def canonical_tautomer(
     )
 
 
-# --- papyrus_structure_pipeline.standardize, one step per library call ---
-# the weight window is `mw_between(200, 800)`: `is_small_molecule` is the same
-# inclusive CalcExactMolWt check
+# --- papyrus standardize(), one step per library call (`papyrus.py` holds the
+# copied functions). The weight window is `mw_between(200, 800)`:
+# `is_small_molecule` is the same inclusive CalcExactMolWt check.
 
 
 @safe_step
 def papyrus_chembl_roundtrip(mol: Mol) -> Mol | None:
     """`standardize_mol`, `get_parent_mol`, then a SMILES write/read; Papyrus
     runs it first and last."""
-    return papyrus_standardizer._apply_chembl_standardization(mol)
-
-
-_SALTS_LOCK = threading.Lock()
+    return papyrus.chembl_roundtrip(mol)
 
 
 @safe_step
 def _papyrus_remove_salts(mol: Mol, include_metals: bool) -> Mol | None:
-    if include_metals:
-        return papyrus_standardizer._remove_supplementary_salts(
-            mol, include_metals=True
-        )
-    # include_metals=False makes the library overwrite its module-level SALTS
-    # list in place with Mol objects, so every later call would raise: restore it
-    with _SALTS_LOCK:
-        saved = list(papyrus_standardizer.SALTS)
-        try:
-            return papyrus_standardizer._remove_supplementary_salts(
-                mol, include_metals=False
-            )
-        finally:
-            papyrus_standardizer.SALTS[:] = saved
+    return papyrus.remove_supplementary_salts(mol, include_metals=include_metals)
 
 
 def papyrus_remove_salts(include_metals: bool = True) -> MolFn:
@@ -381,36 +356,42 @@ def papyrus_remove_salts(include_metals: bool = True) -> MolFn:
 @safe_step
 def papyrus_no_mixtures(mol: Mol) -> Mol | None:
     """None where `Chem.GetMolFrags` finds more than one fragment."""
-    return None if papyrus_standardizer.is_mixture(mol) else mol
+    return None if papyrus.is_mixture(mol) else mol
 
 
 @safe_step
 def papyrus_only_organic(mol: Mol) -> Mol | None:
     """None where ChEMBL's `exclude_flag` is set, no C~C bond exists, or an
     element is outside {C,H,O,N,P,S,F,Cl,Br,I}."""
-    return mol if papyrus_standardizer.is_organic(mol) else None
+    return mol if papyrus.is_organic(mol) else None
 
 
 @safe_step
 def papyrus_uncharge(mol: Mol) -> Mol | None:
     """`rdMolStandardize.Uncharger`, then B3DB's SMARTS neutralizations."""
-    return papyrus_standardizer._uncharge(mol)
+    return papyrus.uncharge(mol)
 
 
 @safe_step
 def _papyrus_canonical_tautomer(
     mol: Mol, allow_stereo_removal: bool, max_tautomers: int
 ) -> Mol | None:
-    return papyrus_standardizer._canonicalize_tautomer(
+    canonical, status = papyrus.canonicalize_tautomer(
         mol, allow_stereo_removal=allow_stereo_removal, max_tautomers=max_tautomers
     )
+    if status != TautomerEnumeratorStatus.Completed:
+        warn("papyrus_canonical_tautomer", f"tautomer enumeration {status.name}")
+    return canonical
 
 
 def papyrus_canonical_tautomer(
     allow_stereo_removal: bool = True, max_tautomers: int = 2**32 - 1
 ) -> MolFn:
-    """Step picking RDKit's canonical tautomer. The Papyrus default
-    `allow_stereo_removal=True` lets tautomerization erase stereocentres."""
+    """Step picking RDKit's canonical tautomer as Papyrus does: the default
+    `allow_stereo_removal=True` lets tautomerization erase stereocentres;
+    False keeps only tautomers with the input's number of chiral centres.
+    A WARNING record when enumeration stopped at `max_tautomers` or RDKit's
+    transform limit."""
     return partial(
         _papyrus_canonical_tautomer,
         allow_stereo_removal=allow_stereo_removal,

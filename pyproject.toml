@@ -19,7 +19,7 @@ rdkit = [
 standardise = [
     "fairfetched[rdkit]",
     "chembl-structure-pipeline>=1.2.4",
-    "papyrus-structure-pipeline>=0.0.5",
+    # papyrus-structure-pipeline is copied into prep/papyrus.py; dev tests against it
 ]
 split = [
     "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
@@ -32,6 +32,7 @@ dev = [
     "fairfetched[split]",
     "fairfetched[rough]",
     "fairfetched[standardise]",
+    "papyrus-structure-pipeline>=0.0.5", # oracle for prep/papyrus.py
     "fairfetched[adrecs]",
     "fairfetched[toxcast]",
     "rust-just>=1.46.0",

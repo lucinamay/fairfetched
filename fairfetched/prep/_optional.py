@@ -62,26 +62,3 @@ except ImportError as e:
 
     def chembl_exclude_flag(mol, includeRDKitSanitization=True) -> bool:
         raise CHEMBL_IMPORT_ERROR
-
-
-try:
-    from papyrus_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
-        standardize as _papyrus_standardize,  # pyright: ignore[reportAssignmentType]
-    )
-    from papyrus_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment]
-        standardizer as papyrus_standardizer,
-    )
-
-
-except ImportError as e:
-    PAPYRUS_IMPORT_ERROR = e
-    papyrus_standardizer = _MissingPackage(e)
-
-    def _papyrus_standardize(mol, **kwargs):
-        """placeholder for papyrus_standardize in case imports dont work.
-        raises respective import error when called"""
-        logger.warning("""
-            please install `papyrus_structure_pipeline` if you want to use
-            Papyrus standardisation
-            """)
-        raise PAPYRUS_IMPORT_ERROR

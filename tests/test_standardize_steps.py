@@ -12,14 +12,21 @@ after ChEMBL's uncharger) have no drop-test: nothing parsed from SMILES can
 show them.
 """
 
+import ast
+import hashlib
+import inspect
 import pickle
 from collections.abc import Callable
+from functools import partial
+from importlib.metadata import version
+from pathlib import Path
 
 import polars as pl
 import pytest
 from rdkit import RDLogger
 from rdkit.Chem import Mol, MolFromSmiles, MolToSmiles
 
+from fairfetched.prep import papyrus
 from fairfetched.prep.mol_expr import MolExpr
 from fairfetched.prep.mol_functions import (
     MolFn,
@@ -231,11 +238,12 @@ class TestPapyrusStandardize:
         assert out == expected
         assert out["iron_mix"] != run([papyrus_remove_salts()])["iron_mix"]
 
-    def test_include_metals_false_leaves_the_library_salt_list_intact(self) -> None:
-        """Two runs in one process; the second would raise on a poisoned list."""
+    def test_include_metals_false_leaves_the_salt_list_intact(self) -> None:
+        """The library overwrites its SALTS with Mol objects on this path, so
+        the second call raises there; the copy must stay a list of SMILES."""
         first = run([papyrus_remove_salts(include_metals=False)])
         assert run([papyrus_remove_salts(include_metals=False)]) == first
-        assert all(isinstance(s, str) for s in psp.standardizer.SALTS)
+        assert all(isinstance(s, str) for s in papyrus.SALTS)
 
     def test_all_lists_pickle(self) -> None:
         """`parallel=True` pickles the pipeline; lambdas and closures would fail."""
@@ -265,3 +273,87 @@ class TestPapyrusStandardize:
     )
     def test_dropping_step_changes_input(self, index: int, name: str) -> None:
         assert run(dropped(STEPS_PAPYRUS_STANDARDIZE, index))[name] != self.full[name]
+
+
+class TestVendoredPapyrus:
+    """`prep/papyrus.py` function by function against papyrus_structure_pipeline
+    0.0.5 on every input; `oracle` nulls where the library raises."""
+
+    @pytest.mark.parametrize("name", NAMES)
+    def test_chembl_roundtrip(self, name: str) -> None:
+        assert (
+            oracle(papyrus.chembl_roundtrip)[name]
+            == oracle(psp.standardizer._apply_chembl_standardization)[name]
+        )
+
+    @pytest.mark.parametrize("include_metals", [True, False])
+    def test_remove_supplementary_salts(self, include_metals: bool) -> None:
+        def library(m: Mol) -> Mol:
+            saved = list(psp.standardizer.SALTS)
+            try:
+                return psp.standardizer._remove_supplementary_salts(
+                    m, include_metals=include_metals
+                )
+            finally:
+                psp.standardizer.SALTS[:] = saved
+
+        ours = partial(
+            papyrus.remove_supplementary_salts, include_metals=include_metals
+        )
+        assert oracle(ours) == oracle(library)
+
+    def test_is_mixture_and_is_organic(self) -> None:
+        for smiles in INPUTS.values():
+            mol = MolFromSmiles(smiles)
+            assert papyrus.is_mixture(mol) == psp.standardizer.is_mixture(mol), smiles
+            assert papyrus.is_organic(mol) == psp.standardizer.is_organic(mol), smiles
+
+    @pytest.mark.parametrize("name", NAMES)
+    def test_uncharge(self, name: str) -> None:
+        assert (
+            oracle(papyrus.uncharge)[name] == oracle(psp.standardizer._uncharge)[name]
+        )
+
+    @pytest.mark.parametrize("allow_stereo_removal", [True, False])
+    def test_canonicalize_tautomer(self, allow_stereo_removal: bool) -> None:
+        ours = oracle(
+            lambda m: papyrus.canonicalize_tautomer(
+                m, allow_stereo_removal=allow_stereo_removal
+            )[0]
+        )
+        library = oracle(
+            lambda m: psp.standardizer._canonicalize_tautomer(
+                m, allow_stereo_removal=allow_stereo_removal
+            )
+        )
+        assert ours == library
+        assert ours["enol"] != INPUTS["enol"]  # the input is not its canonical tautomer
+
+    def test_constants_match_the_library(self) -> None:
+        """The three module lists, and the neutralization SMARTS that the
+        library keeps as a local inside `_uncharge` (read from its source)."""
+        lib = psp.standardizer
+        assert papyrus.SALTS == lib.SALTS
+        assert [f"[{m}]" for m in papyrus.METALS] == lib.METALS
+        assert papyrus.ORGANIC_ATOMS == lib.ORGANIC_ATOMS
+        (assignment,) = [
+            node
+            for node in ast.walk(ast.parse(inspect.getsource(lib._uncharge)))
+            if isinstance(node, ast.Assign)
+            and any(
+                getattr(t, "id", None) == "neutralizing_smiles" for t in node.targets
+            )
+        ]
+        assert papyrus._NEUTRALIZATIONS == ast.literal_eval(assignment.value)
+
+    def test_installed_library_is_the_copied_version(self) -> None:
+        """A newer papyrus_structure_pipeline in the dev environment fails here
+        first: re-diff `prep/papyrus.py` against upstream, then update
+        `papyrus.UPSTREAM`. The equality tests above then say whether the
+        behaviour moved."""
+        source = Path(psp.standardizer.__file__).read_bytes()
+        installed = (
+            version("papyrus-structure-pipeline"),
+            hashlib.sha256(source).hexdigest(),
+        )
+        assert installed == papyrus.UPSTREAM

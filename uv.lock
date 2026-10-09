@@ -656,7 +656,6 @@ split = [
 ]
 standardise = [
     { name = "chembl-structure-pipeline" },
-    { name = "papyrus-structure-pipeline" },
     { name = "rdkit" },
 ]
 toxcast = [
@@ -695,7 +694,7 @@ requires-dist = [
     { name = "fastexcel", marker = "extra == 'adrecs'", specifier = ">=0.12" },
     { name = "fastexcel", marker = "extra == 'toxcast'", specifier = ">=0.12" },
     { name = "nanoom", marker = "extra == 'split'", specifier = ">=0.1.0a20260815" },
-    { name = "papyrus-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=0.0.5" },
+    { name = "papyrus-structure-pipeline", marker = "extra == 'dev'", specifier = ">=0.0.5" },
     { name = "polars", specifier = ">=1.35.2" },
     { name = "pulp", marker = "extra == 'split'", specifier = "<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },

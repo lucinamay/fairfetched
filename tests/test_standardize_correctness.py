@@ -35,7 +35,6 @@ from fairfetched.prep.mol_functions import (
     chembl_standardize,
     no_mixtures,
     only_organic,
-    papyrus_standardize,
     remove_stereo,
     safe_step,
     valid_inchi,
@@ -384,20 +383,15 @@ class TestFailureModes:
                 .alias("m")
             )
 
-    def test_wrapped_and_unwrapped_steps_fail_differently(self) -> None:
-        """`STEPS_CHEMBL` holds the `safe_step`-wrapped `chembl_standardize`,
-        while `STEPS_PAPYRUS` holds the raw `_papyrus_standardize` straight from
-        `_optional.py`. So the same kind of failure nulls the column in one
-        pipeline and kills the query in the other.
-        `mol_functions.papyrus_standardize` is the wrapped version and nothing
-        imports it.
-
-        TODO: pick one. Either wrap both (consistent, silent) or neither
-        (consistent, loud); the current split means error handling depends on
-        which pipeline you picked.
-        """
+    def test_list_steps_are_wrapped_and_custom_steps_are_not(self) -> None:
+        """Every step in the shipped lists is `safe_step`-wrapped, so a failing
+        molecule nulls its row; a raw custom step still raises and kills the
+        query."""
         assert me.STEPS_CHEMBL[0] is chembl_standardize
-        assert STEPS_PAPYRUS[-1] is not papyrus_standardize
+        assert STEPS_PAPYRUS == me.STEPS_PAPYRUS_STANDARDIZE
+        for step in STEPS_PAPYRUS + STEPS_PAPYRUS_NOSTEREO + STEPS_PAPYRUS_ANY_SIZE:
+            function = getattr(step, "func", step)  # partial-built steps
+            assert hasattr(function, "__wrapped__"), step  # set by safe_step's wraps
 
         def boom(mol):
             raise RuntimeError("standardization failed")

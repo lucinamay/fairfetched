@@ -1,12 +1,11 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
-from functools import partial
 
 from rdkit.Chem import Mol
 
-from ._optional import _papyrus_standardize
-from .mol_functions import (
+from fairfetched.prep.mol_functions import (
     MolFn,
+    _mw_between,
     chembl_cleanup_drawing,
     chembl_flatten_tartrate,
     chembl_fragment_parent,
@@ -65,16 +64,7 @@ STEPS_CHEMBL_PARENT: list[MolFn] = [
     chembl_standardize,
     get_parent,
 ]  # salts/solvents stripped
-# TODO: Papyrus standardization may remove stereocentres during tautomer
-# canonicalisation (tautomer_allow_stereo_removal defaults to True) without
-# saying so; state this wherever STEPS_PAPYRUS is documented.
-STEPS_PAPYRUS = [_papyrus_standardize]
-STEPS_PAPYRUS_ANY_SIZE = [
-    partial(_papyrus_standardize, filter_non_small_molecule=False)
-]
-STEPS_PAPYRUS_NOSTEREO = [remove_stereo, _papyrus_standardize]
-
-# the library functions above, one step per library call, in library order
+# the library functions, one step per library call, in library order
 STEPS_CHEMBL_STANDARDIZE_MOL: list[MolFn] = [  # standardize_mol(check_exclusion=False)
     chembl_update_valences,
     chembl_remove_sgroups,
@@ -101,3 +91,13 @@ STEPS_PAPYRUS_STANDARDIZE: list[MolFn] = [
     papyrus_canonical_tautomer(),
     papyrus_chembl_roundtrip,
 ]
+# Papyrus `standardize()` as the list above; `filter_non_small_molecule=False`
+# drops the weight window. Tautomer canonicalisation may erase stereocentres
+# (`tautomer_allow_stereo_removal` defaults to True) without saying so.
+STEPS_PAPYRUS: list[MolFn] = STEPS_PAPYRUS_STANDARDIZE
+STEPS_PAPYRUS_ANY_SIZE: list[MolFn] = [
+    step
+    for step in STEPS_PAPYRUS_STANDARDIZE
+    if getattr(step, "func", None) is not _mw_between
+]
+STEPS_PAPYRUS_NOSTEREO: list[MolFn] = [remove_stereo, *STEPS_PAPYRUS_STANDARDIZE]
