@@ -58,10 +58,13 @@ def make_mol_pipeline(*steps: MolFn) -> MolPipeline:
     return MolPipeline(steps=tuple(steps))
 
 
-STEPS_CHEMBL = [
+STEPS_CHEMBL: list[MolFn] = [
     chembl_standardize
 ]  # uses the mol_functions wrapper, not the rdkit impl
-STEPS_CHEMBL_PARENT = [chembl_standardize, get_parent]  # salts/solvents stripped
+STEPS_CHEMBL_PARENT: list[MolFn] = [
+    chembl_standardize,
+    get_parent,
+]  # salts/solvents stripped
 # TODO: Papyrus standardization may remove stereocentres during tautomer
 # canonicalisation (tautomer_allow_stereo_removal defaults to True) without
 # saying so; state this wherever STEPS_PAPYRUS is documented.
@@ -72,7 +75,7 @@ STEPS_PAPYRUS_ANY_SIZE = [
 STEPS_PAPYRUS_NOSTEREO = [remove_stereo, _papyrus_standardize]
 
 # the library functions above, one step per library call, in library order
-STEPS_CHEMBL_STANDARDIZE_MOL = [  # standardize_mol(check_exclusion=False)
+STEPS_CHEMBL_STANDARDIZE_MOL: list[MolFn] = [  # standardize_mol(check_exclusion=False)
     chembl_update_valences,
     chembl_remove_sgroups,
     chembl_kekulize,
@@ -83,8 +86,12 @@ STEPS_CHEMBL_STANDARDIZE_MOL = [  # standardize_mol(check_exclusion=False)
     chembl_cleanup_drawing,
     sanitize,
 ]
-STEPS_CHEMBL_GET_PARENT_MOL = [chembl_isotope_parent, chembl_fragment_parent()]
-STEPS_PAPYRUS_STANDARDIZE = [  # papyrus standardize() defaults, raise_error=False
+STEPS_CHEMBL_GET_PARENT_MOL: list[MolFn] = [
+    chembl_isotope_parent,
+    chembl_fragment_parent(),
+]
+# papyrus standardize() defaults, raise_error=False
+STEPS_PAPYRUS_STANDARDIZE: list[MolFn] = [
     papyrus_chembl_roundtrip,
     papyrus_remove_salts(),
     papyrus_no_mixtures,

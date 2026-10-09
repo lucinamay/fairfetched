@@ -142,8 +142,9 @@ def via_inchi(mol: Mol) -> Mol | None:
 
 
 @safe_step
-def chembl_standardize(mol, *args, **kwargs):
-    return _chembl_standardize(mol, *args, **kwargs)
+def chembl_standardize(mol: Mol) -> Mol | None:
+    """`chembl_structure_pipeline.standardize_mol` with its defaults."""
+    return _chembl_standardize(mol)
 
 
 @safe_step
