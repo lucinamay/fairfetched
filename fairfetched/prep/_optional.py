@@ -39,14 +39,43 @@ except ImportError as e:
         raise CHEMBL_IMPORT_ERROR
 
 
+class _MissingPackage:
+    """Stands in for an uninstalled package's module; any attribute access
+    raises the ImportError seen at import time."""
+
+    def __init__(self, error: ImportError) -> None:
+        self._error = error
+
+    def __getattr__(self, name: str):
+        raise self._error
+
+
+try:
+    from chembl_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment]
+        standardizer as chembl_standardizer,
+    )
+    from chembl_structure_pipeline.exclude_flag import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment]
+        exclude_flag as chembl_exclude_flag,
+    )
+except ImportError as e:
+    chembl_standardizer = _MissingPackage(e)
+
+    def chembl_exclude_flag(mol, includeRDKitSanitization=True) -> bool:
+        raise CHEMBL_IMPORT_ERROR
+
+
 try:
     from papyrus_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment] #ty:ignore[unused-ignore-comment]
         standardize as _papyrus_standardize,  # pyright: ignore[reportAssignmentType]
+    )
+    from papyrus_structure_pipeline import (  # ty:ignore[unresolved-import] #ty:ignore[unused-ignore-comment]
+        standardizer as papyrus_standardizer,
     )
 
 
 except ImportError as e:
     PAPYRUS_IMPORT_ERROR = e
+    papyrus_standardizer = _MissingPackage(e)
 
     def _papyrus_standardize(mol, **kwargs):
         """placeholder for papyrus_standardize in case imports dont work.

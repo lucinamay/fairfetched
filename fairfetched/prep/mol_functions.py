@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from functools import lru_cache, partial, wraps
@@ -25,7 +26,13 @@ from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 from rdkit.Chem.rdmolfiles import MolFromSmiles, MolToSmiles
 from rdkit.Chem.Scaffolds import MurckoScaffold
 
-from ._optional import _chembl_standardize, chembl_get_parent_mol
+from ._optional import (
+    _chembl_standardize,
+    chembl_exclude_flag,
+    chembl_get_parent_mol,
+    chembl_standardizer,
+    papyrus_standardizer,
+)
 
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
 from ._optional import _papyrus_standardize as _papyrus_standardize_impl
@@ -162,6 +169,183 @@ def only_organic(mol: Mol) -> Mol | None:
     )
     organic = {6, 7, 8, 9, 15, 16, 17, 35, 53}
     return mol if all(a.GetAtomicNum() in organic for a in mol.GetAtoms()) else None
+
+
+# --- chembl_structure_pipeline.standardize_mol, one step per library call ---
+# `standardize_mol(check_exclusion=True)` returns an excluded mol untouched; a
+# step list cannot branch, so `STEPS_CHEMBL_STANDARDIZE_MOL` equals
+# `check_exclusion=False` and `chembl_exclude` drops excluded mols instead.
+
+
+@safe_step
+def chembl_exclude(mol: Mol) -> Mol | None:
+    """None where ChEMBL's `exclude_flag` is set: any atom of its metal list,
+    or more than 7 borons."""
+    return None if chembl_exclude_flag(mol, includeRDKitSanitization=False) else mol
+
+
+@safe_step
+def chembl_update_valences(mol: Mol) -> Mol | None:
+    return chembl_standardizer.update_mol_valences(mol)
+
+
+@safe_step
+def chembl_remove_sgroups(mol: Mol) -> Mol | None:
+    return chembl_standardizer.remove_sgroups_from_mol(mol)
+
+
+@safe_step
+def chembl_kekulize(mol: Mol) -> Mol | None:
+    return chembl_standardizer.kekulize_mol(mol)
+
+
+@safe_step
+def chembl_remove_hs(mol: Mol) -> Mol | None:
+    """`Chem.RemoveHs` keeping wedged, stereo-bearing and odd-valence Hs."""
+    return chembl_standardizer.remove_hs_from_mol(mol)
+
+
+@safe_step
+def chembl_normalize(mol: Mol) -> Mol | None:
+    """ChEMBL's SMIRKS normalizations (nitro, sulfoxide, azide, ...) and
+    alkali-alkoxide bond splitting."""
+    return chembl_standardizer.normalize_mol(mol)
+
+
+@safe_step
+def chembl_uncharge(mol: Mol) -> Mol | None:
+    """`rdMolStandardize.Uncharger(canonicalOrder=True)`."""
+    return chembl_standardizer.uncharge_mol(mol)
+
+
+@safe_step
+def chembl_flatten_tartrate(mol: Mol) -> Mol | None:
+    """Unsets the two stereocentres of free tartrate/tartaric acid fragments."""
+    return chembl_standardizer.flatten_tartrate_mol(mol)
+
+
+@safe_step
+def chembl_cleanup_drawing(mol: Mol) -> Mol | None:
+    """Straightens triple bonds and allenes in a 2D conformer; no-op without one."""
+    return chembl_standardizer.cleanup_drawing_mol(mol)
+
+
+@safe_step
+def sanitize(mol: Mol) -> Mol | None:
+    """`Chem.SanitizeMol`; None where it raises."""
+    Chem.SanitizeMol(mol)
+    return mol
+
+
+# --- chembl_structure_pipeline.get_parent_mol, one step per library call ---
+
+
+@safe_step
+def chembl_isotope_parent(mol: Mol) -> Mol | None:
+    """Isotope labels cleared, then `chembl_remove_hs`."""
+    return chembl_standardizer.get_isotope_parent_mol(mol)
+
+
+@safe_step
+def _chembl_fragment_parent(
+    mol: Mol, neutralize: bool, exclude_by_chembl_standards: bool
+) -> Mol | None:
+    parent, excluded = chembl_standardizer.get_fragment_parent_mol(
+        mol, check_exclusion=exclude_by_chembl_standards, neutralize=neutralize
+    )
+    return None if excluded else parent
+
+
+def chembl_fragment_parent(
+    neutralize: bool = True, exclude_by_chembl_standards: bool = False
+) -> MolFn:
+    """Step stripping ChEMBL's solvents, then salts (keeping everything when
+    nothing would remain), then uncharging; `[chembl_isotope_parent,
+    chembl_fragment_parent()]` is `get_parent`."""
+    return partial(
+        _chembl_fragment_parent,
+        neutralize=neutralize,
+        exclude_by_chembl_standards=exclude_by_chembl_standards,
+    )
+
+
+# --- papyrus_structure_pipeline.standardize, one step per library call ---
+# the weight window is `mw_between(200, 800)`: `is_small_molecule` is the same
+# inclusive CalcExactMolWt check
+
+
+@safe_step
+def papyrus_chembl_roundtrip(mol: Mol) -> Mol | None:
+    """`standardize_mol`, `get_parent_mol`, then a SMILES write/read; Papyrus
+    runs it first and last."""
+    return papyrus_standardizer._apply_chembl_standardization(mol)
+
+
+_SALTS_LOCK = threading.Lock()
+
+
+@safe_step
+def _papyrus_remove_salts(mol: Mol, include_metals: bool) -> Mol | None:
+    if include_metals:
+        return papyrus_standardizer._remove_supplementary_salts(
+            mol, include_metals=True
+        )
+    # include_metals=False makes the library overwrite its module-level SALTS
+    # list in place with Mol objects, so every later call would raise: restore it
+    with _SALTS_LOCK:
+        saved = list(papyrus_standardizer.SALTS)
+        try:
+            return papyrus_standardizer._remove_supplementary_salts(
+                mol, include_metals=False
+            )
+        finally:
+            papyrus_standardizer.SALTS[:] = saved
+
+
+def papyrus_remove_salts(include_metals: bool = True) -> MolFn:
+    """Step stripping Papyrus's extra salt list and, with `include_metals`
+    (the Papyrus default), every metal atom."""
+    return partial(_papyrus_remove_salts, include_metals=include_metals)
+
+
+@safe_step
+def papyrus_no_mixtures(mol: Mol) -> Mol | None:
+    """None where `Chem.GetMolFrags` finds more than one fragment."""
+    return None if papyrus_standardizer.is_mixture(mol) else mol
+
+
+@safe_step
+def papyrus_only_organic(mol: Mol) -> Mol | None:
+    """None where ChEMBL's `exclude_flag` is set, no C~C bond exists, or an
+    element is outside {C,H,O,N,P,S,F,Cl,Br,I}."""
+    return mol if papyrus_standardizer.is_organic(mol) else None
+
+
+@safe_step
+def papyrus_uncharge(mol: Mol) -> Mol | None:
+    """`rdMolStandardize.Uncharger`, then B3DB's SMARTS neutralizations."""
+    return papyrus_standardizer._uncharge(mol)
+
+
+@safe_step
+def _papyrus_canonical_tautomer(
+    mol: Mol, allow_stereo_removal: bool, max_tautomers: int
+) -> Mol | None:
+    return papyrus_standardizer._canonicalize_tautomer(
+        mol, allow_stereo_removal=allow_stereo_removal, max_tautomers=max_tautomers
+    )
+
+
+def papyrus_canonical_tautomer(
+    allow_stereo_removal: bool = True, max_tautomers: int = 2**32 - 1
+) -> MolFn:
+    """Step picking RDKit's canonical tautomer. The Papyrus default
+    `allow_stereo_removal=True` lets tautomerization erase stereocentres."""
+    return partial(
+        _papyrus_canonical_tautomer,
+        allow_stereo_removal=allow_stereo_removal,
+        max_tautomers=max_tautomers,
+    )
 
 
 # top-level functions required for pickling (ProcessPoolExecutor requirement)
