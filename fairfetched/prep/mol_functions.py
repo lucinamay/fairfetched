@@ -4,6 +4,7 @@ import hashlib
 import logging
 import threading
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from functools import lru_cache, partial, wraps
 from typing import Any, ParamSpec, TypeVar
@@ -12,7 +13,7 @@ from numpy import uint8
 from numpy.typing import NDArray
 
 # from fairfetched.standardization.pipeline import CHEMBL_PIPELINE, MolFn, mol_pipeline
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit.Chem import (
     InchiToInchiKey,
     Mol,
@@ -20,6 +21,10 @@ from rdkit.Chem import (
     MolToInchi,
     MolToInchiAndAuxInfo,
     RemoveStereochemistry,
+)
+from rdkit.Chem.MolStandardize.rdMolStandardize import (
+    TautomerEnumerator,
+    TautomerEnumeratorStatus,
 )
 from rdkit.Chem.rdFingerprintGenerator import FingerprintGenerator64, GetMorganGenerator
 from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
@@ -36,11 +41,46 @@ from ._optional import (
 
 # from rdkit.Chem.rdinchi import MolToInchi #returns something different (int64?)
 from ._optional import _papyrus_standardize as _papyrus_standardize_impl
+from .failures import record, warn
 
 P = ParamSpec("P")
 T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
+
+
+# RDKit's most recent log line in this thread, routed in via `LogToPythonLogger`;
+# a ContextVar because polars runs UDFs for sibling expressions on separate threads
+_RDKIT_MESSAGE: ContextVar[str] = ContextVar("fairfetched_rdkit_message", default="")
+
+
+class _LastMessage(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        _RDKIT_MESSAGE.set(record.getMessage().strip().split("] ", 1)[-1])
+
+
+rdBase.LogToPythonLogger()
+logging.getLogger("rdkit").addHandler(_LastMessage())
+
+
+class MolParseError(ValueError):
+    """RDKit returned None for a SMILES/InChI; the message is the reason."""
+
+
+def _error_text(e: Exception) -> str:
+    return str(e) if isinstance(e, MolParseError) else f"{type(e).__name__}: {e}"
+
+
+def _parse_reason(smiles: str) -> str:
+    """Why `MolFromSmiles` returned None. Sanitization problems are reported
+    by `DetectChemistryProblems` without any log; syntax errors only reach us
+    through RDKit's log, which `RDLogger.DisableLog` silences."""
+    unsanitized = MolFromSmiles(smiles, sanitize=False)
+    if unsanitized is not None:
+        problems = Chem.DetectChemistryProblems(unsanitized)
+        if problems:
+            return "; ".join(p.Message() for p in problems)
+    return _RDKIT_MESSAGE.get() or "MolFromSmiles returned None (RDKit log disabled)"
 
 
 def safe_step_function(
@@ -50,7 +90,7 @@ def safe_step_function(
     Decorator:
       - returns None if first argument is None
       - catches all exceptions and returns None
-      - logs the failing step with module-level logger
+      - emits one `failures.record` naming the step, the error and the molecule
     """
 
     def deco(func: Callable[P, T | None]) -> Callable[P, T | None]:
@@ -60,10 +100,11 @@ def safe_step_function(
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
             if (args[0] if args else None) is None:
                 return None
+            _RDKIT_MESSAGE.set("")  # a parse failure then reads this step's message
             try:
                 return func(*args, **kwargs)
-            except Exception:
-                logger.exception("Failure at step '%s'", step)
+            except Exception as e:  # noqa: BLE001  # the step contract: None plus a record
+                record(step, _error_text(e))
                 return None
 
         return wrapper
@@ -269,6 +310,34 @@ def chembl_fragment_parent(
     )
 
 
+@safe_step
+def _canonical_tautomer(
+    mol: Mol, max_tautomers: int, allow_stereo_removal: bool
+) -> Mol | None:
+    enumerator = TautomerEnumerator()
+    enumerator.SetMaxTautomers(max_tautomers)
+    enumerator.SetRemoveSp3Stereo(allow_stereo_removal)
+    enumerator.SetRemoveBondStereo(allow_stereo_removal)
+    result = enumerator.Enumerate(mol)
+    if result.status != TautomerEnumeratorStatus.Completed:
+        warn("canonical_tautomer", f"tautomer enumeration {result.status.name}")
+    return enumerator.PickCanonical(result.tautomers)
+
+
+def canonical_tautomer(
+    max_tautomers: int = 1000, allow_stereo_removal: bool = True
+) -> MolFn:
+    """Step picking RDKit's canonical tautomer, with a WARNING failure record
+    when enumeration stopped at `max_tautomers` or RDKit's transform limit.
+    `papyrus_canonical_tautomer` cannot report that: the library blocks
+    RDKit's log and discards the enumeration status."""
+    return partial(
+        _canonical_tautomer,
+        max_tautomers=max_tautomers,
+        allow_stereo_removal=allow_stereo_removal,
+    )
+
+
 # --- papyrus_structure_pipeline.standardize, one step per library call ---
 # the weight window is `mw_between(200, 800)`: `is_small_molecule` is the same
 # inclusive CalcExactMolWt check
@@ -352,13 +421,21 @@ def papyrus_canonical_tautomer(
 
 
 @safe_step
-def _smiles_to_binary(s: str | None) -> bytes | None:
-    return MolFromSmiles(s).ToBinary()
+def _smiles_to_binary(s: str) -> bytes | None:
+    mol = MolFromSmiles(s)
+    if mol is None:
+        raise MolParseError(_parse_reason(s))
+    return mol.ToBinary()
 
 
 @safe_step
 def _inchi_to_binary(s: str) -> bytes | None:
-    return MolFromInchi(s).ToBinary()
+    mol = MolFromInchi(s)
+    if mol is None:
+        raise MolParseError(
+            _RDKIT_MESSAGE.get() or "MolFromInchi returned None (RDKit log disabled)"
+        )
+    return mol.ToBinary()
 
 
 @safe_step
