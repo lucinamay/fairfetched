@@ -6,7 +6,7 @@ pytest.importorskip("scipy")
 
 from scipy.spatial.distance import pdist
 
-from fairfetched.standardize.rough_expr import (
+from fairfetched.prep.rough_expr import (
     _combined_distance,
     _dispersion,
     _rogi,

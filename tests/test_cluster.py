@@ -4,8 +4,8 @@ import pytest
 
 pytest.importorskip("nanoom")
 
-from fairfetched.standardize.cluster_expr import cluster
-from fairfetched.standardize.split_expr import kfold
+from fairfetched.prep.cluster_expr import cluster
+from fairfetched.prep.split_expr import kfold
 
 
 @pytest.fixture

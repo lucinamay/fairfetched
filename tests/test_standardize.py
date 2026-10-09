@@ -3,9 +3,9 @@ import pytest
 from rdkit.Chem import Mol
 from rdkit.Chem.rdmolops import RemoveAllHs
 
-from fairfetched.standardize import mol_expr as me
-from fairfetched.standardize.mol_expr import MolExpr
-from fairfetched.standardize.mol_functions import remove_stereo
+from fairfetched.prep import mol_expr as me
+from fairfetched.prep.mol_expr import MolExpr
+from fairfetched.prep.mol_functions import remove_stereo
 
 TEST_DF = pl.DataFrame(
     {

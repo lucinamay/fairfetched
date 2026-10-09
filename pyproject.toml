@@ -22,10 +22,10 @@ standardise = [
     "papyrus-structure-pipeline>=0.0.5",
 ]
 split = [
-    "nanoom>=0.1.0a20260815", # fold assignment in standardize.split_expr
+    "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
 ]
-rough = ["scipy>=1.6"] # distances + clustering in standardize.rough_expr; 1.6 adds integrate.trapezoid
+rough = ["scipy>=1.6"] # distances + clustering in prep.rough_expr; 1.6 adds integrate.trapezoid
 dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",

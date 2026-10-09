@@ -11,7 +11,7 @@ from functools import partial
 import polars as pl
 import pytest
 
-from fairfetched.standardize import data_expr as de
+from fairfetched.prep import data_expr as de
 
 # column names CAPRICHO hard-codes, so both sides read the same frame
 MOL, ASSAY, TARGET, DOC = (

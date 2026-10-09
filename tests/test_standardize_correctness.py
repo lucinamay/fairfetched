@@ -1,4 +1,4 @@
-"""Chemistry correctness tests for `fairfetched.standardize`.
+"""Chemistry correctness tests for `fairfetched.prep`.
 
 `test_standardize.py` covers plumbing: does an expression build, is the dtype
 right, is the column non-null. Those tests all pass if `standardize()` quietly
@@ -27,9 +27,9 @@ import pytest
 from rdkit import RDLogger
 from rdkit.Chem import AddHs, Mol, MolFromSmiles, MolToSmiles
 
-from fairfetched.standardize import mol_expr as me
-from fairfetched.standardize.mol_expr import MolExpr
-from fairfetched.standardize.mol_functions import (
+from fairfetched.prep import mol_expr as me
+from fairfetched.prep.mol_expr import MolExpr
+from fairfetched.prep.mol_functions import (
     MolFn,
     _binary_to_inchikey,
     chembl_standardize,
@@ -41,7 +41,7 @@ from fairfetched.standardize.mol_functions import (
     valid_inchi,
     via_inchi,
 )
-from fairfetched.standardize.pipeline import (
+from fairfetched.prep.pipeline import (
     STEPS_CHEMBL_PARENT,
     STEPS_PAPYRUS,
     STEPS_PAPYRUS_ANY_SIZE,
@@ -428,7 +428,7 @@ class TestFailureModes:
         TODO: let ImportError through in `safe_step`, or check for the
         placeholder when a pipeline is built rather than per molecule.
         """
-        import fairfetched.standardize.mol_functions as mf
+        import fairfetched.prep.mol_functions as mf
 
         def missing_dependency(mol, *args, **kwargs):
             raise ImportError("chembl_structure_pipeline not installed")
