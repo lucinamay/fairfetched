@@ -23,9 +23,8 @@ from pathlib import Path
 
 import polars as pl
 
+from fairfetched.get import adrecs
 from fairfetched.utils import BASE_DIR, ensure_url, raw
-
-from . import adrecs
 
 _lg = lg.getLogger(__name__)
 
@@ -123,7 +122,9 @@ def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
             .join(adr, on="adr_id", how="left")
         ),
         "drug_adr_gene": (
-            lfs["adr_gene"].join(gene, on="gene_id", how="left").join(adr, on="adr_id", how="left")
+            lfs["adr_gene"]
+            .join(gene, on="gene_id", how="left")
+            .join(adr, on="adr_id", how="left")
         ),
     }
 

@@ -1,7 +1,13 @@
 import sys
 from collections.abc import Iterable
 
-from ._optional import HAS_RICH, HAS_TQDM, in_marimo, rich_track, tqdm_track
+from fairfetched.utils._optional import (
+    HAS_RICH,
+    HAS_TQDM,
+    in_marimo,
+    rich_track,
+    tqdm_track,
+)
 
 
 def _simple_track(

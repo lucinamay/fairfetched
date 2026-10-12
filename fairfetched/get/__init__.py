@@ -1,4 +1,4 @@
-from .dataset import (
+from fairfetched.get.dataset import (
     Adrecs,
     AdrecsTarget,
     Chembl,
@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 if __name__ == "__main__":
-    from .papyrus import ensure_raw_files, latest
+    from fairfetched.get.papyrus import ensure_raw_files, latest
 
     print(latest())
     ensure_raw_files(latest())

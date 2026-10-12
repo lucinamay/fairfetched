@@ -13,9 +13,8 @@ from pathlib import Path
 import polars as pl
 import polars.selectors as cs
 
+from fairfetched.get import _pubchem
 from fairfetched.utils import BASE_DIR, raw
-
-from . import _pubchem
 
 PUBCHEM_BIOASSAY_DIR = BASE_DIR / "pubchem_bioassay"
 
