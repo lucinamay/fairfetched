@@ -2,7 +2,7 @@
 they are built from. The oracle is the library's whole-function call on the
 same input, so these tests say nothing about chemistry: only that
 `STEPS_CHEMBL_STANDARDIZE_MOL`, `STEPS_CHEMBL_GET_PARENT_MOL` and
-`STEPS_PAPYRUS_STANDARDIZE` equal `standardize_mol`, `get_parent_mol` and
+`STEPS_PAPYRUS` equal `standardize_mol`, `get_parent_mol` and
 Papyrus `standardize` on every input, and that each step with a visible effect
 on SMILES input is actually run (dropping it changes a named input).
 
@@ -28,17 +28,15 @@ from rdkit.Chem import Mol, MolFromSmiles, MolToSmiles
 
 from fairfetched.prep import papyrus
 from fairfetched.prep.mol_expr import MolExpr
-from fairfetched.prep.mol_functions import (
-    MolFn,
-    chembl_exclude,
-    chembl_fragment_parent,
-    papyrus_remove_salts,
-)
+from fairfetched.prep.mol_functions import MolFn
 from fairfetched.prep.pipeline import (
     STEPS_CHEMBL_GET_PARENT_MOL,
     STEPS_CHEMBL_PARENT,
     STEPS_CHEMBL_STANDARDIZE_MOL,
-    STEPS_PAPYRUS_STANDARDIZE,
+    STEPS_PAPYRUS,
+    chembl_exclude,
+    chembl_fragment_parent,
+    papyrus_remove_salts,
 )
 
 RDLogger.DisableLog("rdApp.*")  # pyright: ignore[reportAttributeAccessIssue]
@@ -201,9 +199,9 @@ class TestChemblGetParentMol:
 
 
 class TestPapyrusStandardize:
-    """`STEPS_PAPYRUS_STANDARDIZE` is Papyrus `standardize()` with its defaults."""
+    """`STEPS_PAPYRUS` is Papyrus `standardize()` with its defaults."""
 
-    full = run(STEPS_PAPYRUS_STANDARDIZE)
+    full = run(STEPS_PAPYRUS)
     expected = oracle(lambda m: psp.standardize(m, raise_error=False))
 
     @pytest.mark.parametrize("name", NAMES)
@@ -218,7 +216,7 @@ class TestPapyrusStandardize:
         assert self.full["ammonium"] is None  # under 200 Da
 
     def test_parallel_pickles_partial_steps(self) -> None:
-        assert run(STEPS_PAPYRUS_STANDARDIZE, parallel=True) == self.full
+        assert run(STEPS_PAPYRUS, parallel=True) == self.full
 
     def test_include_metals_false_matches_library_and_keeps_metals(self) -> None:
         """Each library call with `include_metals=False` overwrites its SALTS
@@ -250,14 +248,14 @@ class TestPapyrusStandardize:
         for steps in (
             STEPS_CHEMBL_STANDARDIZE_MOL,
             STEPS_CHEMBL_GET_PARENT_MOL,
-            STEPS_PAPYRUS_STANDARDIZE,
+            STEPS_PAPYRUS,
         ):
             pickle.dumps(steps)
 
     @pytest.mark.parametrize(
         "index,name",
         drop_cases(
-            STEPS_PAPYRUS_STANDARDIZE,
+            STEPS_PAPYRUS,
             {
                 "_papyrus_remove_salts": [
                     "pyridine_salt",
@@ -272,7 +270,7 @@ class TestPapyrusStandardize:
         ),
     )
     def test_dropping_step_changes_input(self, index: int, name: str) -> None:
-        assert run(dropped(STEPS_PAPYRUS_STANDARDIZE, index))[name] != self.full[name]
+        assert run(dropped(STEPS_PAPYRUS, index))[name] != self.full[name]
 
 
 class TestVendoredPapyrus:

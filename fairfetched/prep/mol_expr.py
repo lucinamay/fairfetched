@@ -33,7 +33,6 @@ from fairfetched.prep.mol_functions import (
     _num_undefined_stereocenters,
     _smiles_to_binary,
     _stable_hash64,
-    get_parent,
     mw_between,
     remove_stereo,
 )
@@ -45,8 +44,8 @@ from fairfetched.prep.pipeline import (
     STEPS_PAPYRUS,
     STEPS_PAPYRUS_ANY_SIZE,
     STEPS_PAPYRUS_NOSTEREO,
-    STEPS_PAPYRUS_STANDARDIZE,
     MolPipeline,
+    get_parent,
 )
 from fairfetched.utils._track import track
 
@@ -55,11 +54,6 @@ logger = logging.getLogger(__name__)
 # //2 for roughly the physical cores - slightly less
 _N_WORKERS: int = round((os.cpu_count() or 2.2) // 2.2)
 _CTX = mp.get_context("spawn")
-
-
-# --- primitive steps ---
-
-# --- pipeline builder ---
 
 
 def _map_nodedup(
@@ -128,7 +122,6 @@ class MolExpr(pl.Expr):
     """Lightweight pl.Expr copy for mol-specific functionalities"""
 
     _expr: pl.Expr
-    _parallel: bool = False
     # user line that built the expression; every failure record cites it
     _site: CallSite | None = None
 
@@ -175,9 +168,7 @@ class MolExpr(pl.Expr):
         )
 
     @classmethod
-    def col(
-        cls, col: str = "mol", parallel: bool = False, dedup: bool = False
-    ) -> "MolExpr":
+    def col(cls, col: str = "mol") -> "MolExpr":
         """Wrap an existing binary mol column."""
         return cls(pl.col(col), _site=callsite())
 
@@ -264,7 +255,7 @@ class MolExpr(pl.Expr):
             is_elementwise=not parallel,
         )
 
-    def to_binary(self, parallel: bool = False) -> pl.Expr:
+    def to_binary(self) -> pl.Expr:
         return self._expr
 
     def to_smiles(self, parallel: bool = False) -> pl.Expr:
@@ -368,6 +359,5 @@ __all__ = [
     "STEPS_PAPYRUS",
     "STEPS_PAPYRUS_ANY_SIZE",
     "STEPS_PAPYRUS_NOSTEREO",
-    "STEPS_PAPYRUS_STANDARDIZE",
     "MolExpr",
 ]

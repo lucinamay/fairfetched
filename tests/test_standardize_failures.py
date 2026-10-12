@@ -27,8 +27,14 @@ from fairfetched.prep.failures import (
     read_failure_log,
 )
 from fairfetched.prep.mol_expr import MolExpr
-from fairfetched.prep.mol_functions import canonical_tautomer, safe_step
-from fairfetched.prep.pipeline import STEPS_CHEMBL, STEPS_PAPYRUS
+from fairfetched.prep.mol_functions import canonical_tautomer, mw_between, safe_step
+from fairfetched.prep.pipeline import (
+    STEPS_CHEMBL,
+    STEPS_PAPYRUS,
+    chembl_fragment_parent,
+    papyrus_canonical_tautomer,
+    papyrus_remove_salts,
+)
 
 GOOD = ["CCO", "c1ccccc1"]
 BAD = "C1CC"
@@ -59,6 +65,27 @@ def parse(smiles: list[str | None]) -> pl.DataFrame:
     return pl.DataFrame({"smiles": smiles}).with_columns(
         MolExpr.from_smiles("smiles").to_smiles()
     )
+
+
+class TestStepNames:
+    """A step built by a factory records the factory's name on every level,
+    so one `step` value finds all its records."""
+
+    @pytest.mark.parametrize(
+        ("step", "name"),
+        [
+            (mw_between(200, 800), "mw_between"),
+            (canonical_tautomer(), "canonical_tautomer"),
+            (chembl_fragment_parent(), "chembl_fragment_parent"),
+            (papyrus_remove_salts(), "papyrus_remove_salts"),
+            (papyrus_canonical_tautomer(), "papyrus_canonical_tautomer"),
+        ],
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_error_record_uses_the_public_name(self, step, name: str) -> None:
+        with FailureCollector() as failures:
+            assert step("not a mol") is None
+        assert rows(failures, "level", "step") == [("ERROR", name)]
 
 
 class TestRecords:

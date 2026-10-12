@@ -27,22 +27,22 @@ import pytest
 from rdkit import rdBase
 from rdkit.Chem import Mol, MolFromSmiles, MolToSmiles
 
-from fairfetched.prep import mol_expr as me
 from fairfetched.prep.mol_expr import MolExpr
 from fairfetched.prep.mol_functions import (
     MolFn,
     _binary_to_inchikey,
-    chembl_standardize,
     remove_stereo,
     safe_step,
     valid_inchi,
     via_inchi,
 )
 from fairfetched.prep.pipeline import (
+    STEPS_CHEMBL,
     STEPS_CHEMBL_PARENT,
     STEPS_PAPYRUS,
     STEPS_PAPYRUS_ANY_SIZE,
     STEPS_PAPYRUS_NOSTEREO,
+    chembl_standardize,
 )
 
 rdBase.DisableLog("rdApp.*")
@@ -126,11 +126,9 @@ def batch(sink: Sink, *steps: MolFn) -> dict[str, Any]:
 # Python equality on the scalar result (not a polars column `!=`) means a
 # null-vs-non-null mismatch fails loudly instead of vanishing under Kleene logic.
 RDKIT_SMILES = batch(lambda e: e.to_smiles())
-CHEMBL_SMILES = batch(lambda e: e.to_smiles(), *me.STEPS_CHEMBL)
-CHEMBL_INCHIKEY = batch(lambda e: e.to_inchikey(), *me.STEPS_CHEMBL)
-CHEMBL_TWICE_INCHIKEY = batch(
-    lambda e: e.to_inchikey(), *(me.STEPS_CHEMBL + me.STEPS_CHEMBL)
-)
+CHEMBL_SMILES = batch(lambda e: e.to_smiles(), *STEPS_CHEMBL)
+CHEMBL_INCHIKEY = batch(lambda e: e.to_inchikey(), *STEPS_CHEMBL)
+CHEMBL_TWICE_INCHIKEY = batch(lambda e: e.to_inchikey(), *(STEPS_CHEMBL + STEPS_CHEMBL))
 PAPYRUS_INCHIKEY = batch(lambda e: e.to_inchikey(), *STEPS_PAPYRUS)
 
 
@@ -223,7 +221,7 @@ class TestInvariants:
         otherwise deduplicating a merged dataset by key silently keeps
         duplicates.
         """
-        assert len(set(keys([smi(n) for n in group], *me.STEPS_CHEMBL))) == 1
+        assert len(set(keys([smi(n) for n in group], *STEPS_CHEMBL))) == 1
 
     def test_salts_are_left_intact(self) -> None:
         """`STEPS_CHEMBL` is `standardize_mol` alone. Salt and solvent stripping
@@ -232,7 +230,7 @@ class TestInvariants:
         `STEPS_CHEMBL_PARENT`, tested in `TestParentAndSize`.
         """
         row = MOLECULES["sodium_acetate_ionic"]
-        assert keys([row["input_smiles"]], *me.STEPS_CHEMBL) == [row["chembl_inchikey"]]
+        assert keys([row["input_smiles"]], *STEPS_CHEMBL) == [row["chembl_inchikey"]]
 
     def test_only_alkali_metals_are_disconnected(self) -> None:
         """ChEMBL splits a covalent Na-O bond into ions but leaves Fe-O alone.
@@ -242,7 +240,7 @@ class TestInvariants:
         a sodium carboxylate leave the same pipeline in different forms.
         """
         for name in ("sodium_acetate_covalent", "iron_diacetate"):
-            assert smis([smi(name)], *me.STEPS_CHEMBL) == [
+            assert smis([smi(name)], *STEPS_CHEMBL) == [
                 MOLECULES[name]["chembl_smiles"]
             ]
 
@@ -263,7 +261,7 @@ class TestStereochemistry:
         ids=["tetrahedral", "double_bond", "naproxen"],
     )
     def test_stereoisomers_stay_distinct(self, pair: tuple[str, str]) -> None:
-        assert len(set(keys([smi(n) for n in pair], *me.STEPS_CHEMBL))) == 2
+        assert len(set(keys([smi(n) for n in pair], *STEPS_CHEMBL))) == 2
 
     @pytest.mark.parametrize(
         "pair",
@@ -274,7 +272,7 @@ class TestStereochemistry:
         """`remove_stereo` has to handle double-bond geometry as well as
         tetrahedral centres, so maleic and fumaric acid must come out identical.
         """
-        collapsed = keys([smi(n) for n in pair], remove_stereo, *me.STEPS_CHEMBL)
+        collapsed = keys([smi(n) for n in pair], remove_stereo, *STEPS_CHEMBL)
         assert len(set(collapsed)) == 1
         assert collapsed[0] == MOLECULES[pair[0]]["chembl_nostereo_inchikey"]
 
@@ -291,7 +289,7 @@ class TestStereochemistry:
         STEPS_PAPYRUS loses the stereochemistry with no indication it happened.
         """
         row = MOLECULES["naproxen_s"]
-        chembl_key = keys([row["input_smiles"]], *me.STEPS_CHEMBL)[0]
+        chembl_key = keys([row["input_smiles"]], *STEPS_CHEMBL)[0]
         papyrus_key = keys([row["input_smiles"]], *STEPS_PAPYRUS)[0]
 
         assert chembl_key == row["chembl_inchikey"]
@@ -338,7 +336,7 @@ class TestStereochemistry:
         TODO: document this in the README next to STEPS_CHEMBL / STEPS_PAPYRUS.
         """
         row = MOLECULES[name]
-        chembl_key = keys([row["input_smiles"]], *me.STEPS_CHEMBL)[0]
+        chembl_key = keys([row["input_smiles"]], *STEPS_CHEMBL)[0]
         papyrus_key = keys([row["input_smiles"]], *STEPS_PAPYRUS)[0]
         assert chembl_key == row["chembl_inchikey"]
         assert papyrus_key == row["papyrus_inchikey"]
@@ -362,7 +360,7 @@ class TestFailureModes:
         df = pl.DataFrame({"smiles": ["CCO", None, "CCC"]})
         out = df.with_columns(
             MolExpr.from_smiles("smiles")
-            .standardize(*me.STEPS_CHEMBL)
+            .standardize(*STEPS_CHEMBL)
             .to_smiles()
             .alias("s")
         )
@@ -385,8 +383,7 @@ class TestFailureModes:
         """Every step in the shipped lists is `safe_step`-wrapped, so a failing
         molecule nulls its row; a raw custom step still raises and kills the
         query."""
-        assert me.STEPS_CHEMBL[0] is chembl_standardize
-        assert STEPS_PAPYRUS == me.STEPS_PAPYRUS_STANDARDIZE
+        assert STEPS_CHEMBL[0] is chembl_standardize
         for step in STEPS_PAPYRUS + STEPS_PAPYRUS_NOSTEREO + STEPS_PAPYRUS_ANY_SIZE:
             function = getattr(step, "func", step)  # partial-built steps
             assert hasattr(function, "__wrapped__"), step  # set by safe_step's wraps
@@ -427,19 +424,19 @@ class TestFailureModes:
         TODO: let ImportError through in `safe_step`, or check for the
         placeholder when a pipeline is built rather than per molecule.
         """
-        import fairfetched.prep.mol_functions as mf
+        from fairfetched.prep import pipeline
 
         def missing_dependency(mol, *args, **kwargs):
             raise ImportError("chembl_structure_pipeline not installed")
 
-        monkeypatch.setattr(mf, "_chembl_standardize", missing_dependency)
+        monkeypatch.setattr(pipeline, "_chembl_standardize", missing_dependency)
         logging.disable(logging.CRITICAL)
         try:
             df = pl.DataFrame({"smiles": ["CCO"] * 3})
             with pytest.raises(ImportError):
                 df.with_columns(
                     MolExpr.from_smiles("smiles")
-                    .standardize(mf.chembl_standardize)
+                    .standardize(pipeline.chembl_standardize)
                     .to_smiles()
                     .alias("s")
                 )
@@ -528,13 +525,13 @@ class TestExecutionModes:
         df = pl.DataFrame({"smiles": MIXED})
         serial = df.with_columns(
             MolExpr.from_smiles("smiles")
-            .standardize(*me.STEPS_CHEMBL)
+            .standardize(*STEPS_CHEMBL)
             .to_inchikey()
             .alias("k")
         )
         parallel = df.with_columns(
             MolExpr.from_smiles("smiles", parallel=True)
-            .standardize(*me.STEPS_CHEMBL, parallel=True)
+            .standardize(*STEPS_CHEMBL, parallel=True)
             .to_inchikey(parallel=True)
             .alias("k")
         )
@@ -627,14 +624,14 @@ class TestParentAndSize:
         output of the pipeline.
         """
         assert len(set(keys([self.BASE, self.SALT], *STEPS_CHEMBL_PARENT))) == 1
-        assert len(set(keys([self.BASE, self.SALT], *me.STEPS_CHEMBL))) == 2
+        assert len(set(keys([self.BASE, self.SALT], *STEPS_CHEMBL))) == 2
 
     def test_expr_get_parent_matches_the_step_list(self) -> None:
         df = pl.DataFrame({"smiles": [self.SALT]})
         out = df.with_columns(
             MolExpr.from_smiles("smiles").get_parent().to_inchikey().alias("k")
         )
-        assert out["k"].to_list() == keys([self.BASE], *me.STEPS_CHEMBL)
+        assert out["k"].to_list() == keys([self.BASE], *STEPS_CHEMBL)
 
     def test_get_parent_in_parallel_matches_serial(self) -> None:
         """The `partial` carrying `exclude_by_chembl_standards` has to survive
@@ -700,8 +697,8 @@ class TestParentAndSize:
         assert len(set(out["k"])) == 1
 
 
-class TestFilterSteps:
-    """These decide which molecules leave the dataset."""
+class TestInchiSteps:
+    """Steps that go through InChI."""
 
     def test_valid_inchi_keeps_representable_molecules(self) -> None:
         assert valid_inchi(mol(smi("aspirin_aromatic"))) is not None
