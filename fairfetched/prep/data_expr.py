@@ -100,10 +100,10 @@ def is_not_in(col: str, values: Sequence) -> pl.Expr:
 
 
 def assay_size(assay: str = "assay_id", mol: str = "molregno") -> pl.Expr:
-    """Distinct non-null `mol` per `assay`, counted over the rows of the frame (pl.UInt32).
+    """unique non-null `mol` per `assay`, over the frame's rows (pl.UInt32).
 
-    Differs from CAPRICHO, which counts over the whole assay in ChEMBL; the
-    Chembl preset uses `fairfetched.get._capricho.assay_sizes` for that.
+    c.f. CAPRICHO counts over whole assay in ChEMBL.
+    the Chembl preset uses `fairfetched.get._capricho.assay_sizes` for that.
     """
     return pl.col(mol).drop_nulls().n_unique().over(assay)
 
@@ -117,9 +117,9 @@ def is_cross_document_duplicate(
     """`relation` == "=" and the "=" rows sharing `keys` come from more than one
     `doc` (null counts as a `doc`).
 
-    A note, not a drop: the same value reported in several papers. Differs from
-    CAPRICHO, whose pandas `groupby` drops rows with a null key, so rows with a
-    null `mutation` (wild type) are never flagged there.
+    A note, not a drop: the same value reported in several papers.
+    c.f. CAPRICHO's pandas `groupby` drops null-key rows, such that
+    rows with a null `mutation` (wild type) are never flagged there.
     """
     exact = pl.col(relation) == "="
     n_docs = pl.col(doc).filter(exact).n_unique().over(keys)
@@ -204,15 +204,15 @@ def flag_low_assay_overlap(
     tol: float = 1e-9,
     name: str = "low_assay_overlap",
 ) -> pl.LazyFrame:
-    """Add `name`: the row's `assay` has no partner assay of the same `target`
-    sharing >= `min_overlap` distinct `mol`s, counting only pairs from different
-    non-null `doc`s with different non-null `value`s that are not a unit
-    annotation error.
+    """Adds `name` col noting when `assay` has no partner assay of the same `target`
+    that shares >=`min_overlap` distinct `mol`s. overlap defined as pairs from different `doc`s with different `value`s that are not a unit annotation error.
 
     Rows where `skip` is true (CAPRICHO: size-flagged assays) take no part and
     are not flagged. As in CAPRICHO, a `target` with fewer than 2 assays is not
-    checked. Differs from CAPRICHO, which counts row pairs rather than distinct
-    `mol`s, and counts pairs with a null `value` or `doc` as differing.
+    checked. 
+
+    c.f. CAPRICHO counts row pairs rather than distinct
+    `mol`s, and counts pairs with a null `value` or `doc` as differing. (A molecule measured 3 times in assay A and twice in assay B counts as 6 overlapping compounds.)
     Quadratic in the distinct (`assay`, `doc`, `value`) per (`target`, `mol`).
     """
     if min_overlap < 1:
