@@ -6,7 +6,7 @@ pytest.importorskip("nanoom")
 
 from sklearn.model_selection import StratifiedGroupKFold
 
-from fairfetched.standardize.split_expr import kfold
+from fairfetched.prep.split_expr import kfold
 
 
 @pytest.fixture

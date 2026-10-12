@@ -6,7 +6,8 @@ pytest.importorskip("scipy")
 
 from scipy.spatial.distance import pdist
 
-from fairfetched.standardize.rough_expr import (
+from fairfetched.prep.rough_expr import (
+    Metric,
     _combined_distance,
     _dispersion,
     _rogi,
@@ -23,7 +24,7 @@ FIGURE_2 = {
     256: (0.09, 0.42),
     1024: (0.05, 0.43),
 }
-X_COLS = {"fp": "tanimoto", "emb": "cosine"}
+X_COLS: dict[str, Metric] = {"fp": "tanimoto", "emb": "cosine"}
 
 
 @pytest.fixture(scope="module")

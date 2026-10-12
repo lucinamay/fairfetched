@@ -19,19 +19,20 @@ rdkit = [
 standardise = [
     "fairfetched[rdkit]",
     "chembl-structure-pipeline>=1.2.4",
-    "papyrus-structure-pipeline>=0.0.5",
+    # papyrus-structure-pipeline is copied into prep/papyrus.py; dev tests against it
 ]
 split = [
-    "nanoom>=0.1.0a20260815", # fold assignment in standardize.split_expr
+    "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
 ]
-rough = ["scipy>=1.6"] # distances + clustering in standardize.rough_expr; 1.6 adds integrate.trapezoid
+rough = ["scipy>=1.6"] # distances + clustering in prep.rough_expr; 1.6 adds integrate.trapezoid
 dev = [
     "pytest>=9.0.2",
     "sqlalchemy>=2.0.46",
     "fairfetched[split]",
     "fairfetched[rough]",
     "fairfetched[standardise]",
+    "papyrus-structure-pipeline>=0.0.5", # oracle for prep/papyrus.py
     "fairfetched[adrecs]",
     "fairfetched[toxcast]",
     "rust-just>=1.46.0",
@@ -42,6 +43,11 @@ dev = [
 # -rxX reports every xfail/xpass + reason (c.f. one count) so known bugs with xfail(strict=True) are visible
 addopts = "-rxX"
 
+[tool.pyright]
+# resolve imports in the uv venv even when pyright runs without it activated
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
 
 [tool.setuptools]
 package-dir = {"" = "."}
@@ -59,6 +65,9 @@ members = [
 fairfetched = { workspace = true }
 
 [dependency-groups]
+capricho = [
+    "capricho>=1.0.4",
+]
 dev = [
     "chembl-structure-pipeline>=1.2.4",
     "fairfetched[split]",

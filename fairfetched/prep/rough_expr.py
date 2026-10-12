@@ -193,7 +193,7 @@ def _struct_to_replicate_variance(
         out = points.select((dof * pl.col(_VAR)).sum() / dof.sum()).item()
     else:
         out = points.get_column(_VAR).mean()
-    return out / df.get_column(_Y).var() if normalize else out
+    return out / df.get_column(_Y).var() if normalize else out  # pyright: ignore[reportOperatorIssue, reportReturnType]
 
 
 def _unit_distance(x: np.ndarray, metric: Metric) -> np.ndarray:
@@ -239,7 +239,7 @@ def _combined_distance(
             inverse = inverse.ravel()
             d = squareform(square[np.ix_(inverse, inverse)], checks=False)
         total = total + weights[col] * d
-    return total / sum(weights[col] for col in metrics)
+    return total / sum(weights[col] for col in metrics)  # pyright: ignore[reportReturnType]
 
 
 def _dispersion(y: np.ndarray, clusters: np.ndarray, multitask: Multitask) -> float:

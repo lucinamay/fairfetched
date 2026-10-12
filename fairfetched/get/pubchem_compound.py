@@ -9,9 +9,8 @@ from pathlib import Path
 
 import polars as pl
 
+from fairfetched.get import _pubchem
 from fairfetched.utils import BASE_DIR, raw
-
-from . import _pubchem
 
 PUBCHEM_COMPOUND_DIR = BASE_DIR / "pubchem_compound"
 

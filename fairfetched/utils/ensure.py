@@ -6,7 +6,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from ._track import track
+from fairfetched.utils._track import track
 
 _lg = lg.getLogger(__name__)
 
