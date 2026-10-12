@@ -37,7 +37,7 @@ from fairfetched.prep._optional import (
     chembl_get_parent_mol,
     chembl_standardizer,
 )
-from fairfetched.prep.failures import record, warn
+from fairfetched.prep.failures import note, record, warn
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -139,7 +139,12 @@ def via_inchi(mol: Mol) -> Mol | None:
 
 @safe_step
 def chembl_standardize(mol: Mol) -> Mol | None:
-    """`chembl_structure_pipeline.standardize_mol` with its defaults."""
+    """`chembl_structure_pipeline.standardize_mol` with its defaults, which
+    return a mol ChEMBL would not register (any METAL_LIST atom, or more than
+    7 borons) untouched: no normalization, no uncharging. Such mols get a
+    WARNING record; `STEPS_CHEMBL_STANDARDIZE_MOL` standardizes them instead."""
+    if chembl_exclude_flag(mol, includeRDKitSanitization=False):
+        warn("chembl_standardize", "ChEMBL exclude flag set; returned unstandardized")
     return _chembl_standardize(mol)
 
 
@@ -148,20 +153,25 @@ def get_parent(mol: Mol, exclude_by_chembl_standards: bool = False) -> Mol | Non
     """`chembl_structure_pipeline.get_parent_mol`: strips salts/solvents and
     neutralises.
 
-    ChEMBL flags structures it would not register (any metal atom, or more than
-    7 borons, checked on the input); `exclude_by_chembl_standards=True` returns
-    None for those, e.g. cisplatin. Default False keeps them.
+    ChEMBL flags structures it would not register (any METAL_LIST atom, or more
+    than 7 borons, checked on the salt-stripped parent);
+    `exclude_by_chembl_standards=True` returns None for those, e.g. cisplatin.
+    Default False keeps them.
     """
     parent, exclude = chembl_get_parent_mol(
         mol, check_exclusion=exclude_by_chembl_standards
     )
-    return None if exclude and exclude_by_chembl_standards else parent
+    if exclude:
+        note("get_parent", "ChEMBL exclude flag set")
+        return None
+    return parent
 
 
 @safe_step
 def _mw_between(mol: Mol, lo: float | None, hi: float | None) -> Mol | None:
     mw = CalcExactMolWt(mol)
     if (lo is not None and mw < lo) or (hi is not None and mw > hi):
+        note("mw_between", f"exact mass {mw:.2f} outside [{lo}, {hi}]")
         return None
     return mol
 
@@ -181,27 +191,10 @@ def mw_between(lo: float | None = None, hi: float | None = None) -> MolFn:
 def valid_inchi(mol: Mol) -> Mol | None:
     """Returns mol only if it produces a valid InChI."""
     inchi = MolToInchi(mol)
-    return mol if (inchi and MolFromInchi(inchi)) else None
-
-
-@safe_step
-def no_mixtures(mol: Mol) -> Mol | None:
-    """returns none if mol is mixture. untested naive implementation (checks for period in smiles)"""
-    logger.warning(
-        "fairfetched.standardization.no_mixtures() is still an untested naive implementation"
-    )
-    return None if "." in MolToSmiles(mol) else mol
-
-
-@safe_step  # @TODO: check implementation for this
-def only_organic(mol: Mol) -> Mol | None:
-    """returns none if mol is organic. untested naive implementation, checks if
-    all atoms are ∈ {C,N,O,F,P,S,Cl,Br,I}"""
-    logger.warning(
-        "fairfetched.standardization.only_organic() is still an untested naive implementation"
-    )
-    organic = {6, 7, 8, 9, 15, 16, 17, 35, 53}
-    return mol if all(a.GetAtomicNum() in organic for a in mol.GetAtoms()) else None
+    if inchi and MolFromInchi(inchi):
+        return mol
+    note("valid_inchi", "no valid InChI")
+    return None
 
 
 # --- chembl_structure_pipeline.standardize_mol, one step per library call ---
@@ -214,7 +207,10 @@ def only_organic(mol: Mol) -> Mol | None:
 def chembl_exclude(mol: Mol) -> Mol | None:
     """None where ChEMBL's `exclude_flag` is set: any atom of its metal list,
     or more than 7 borons."""
-    return None if chembl_exclude_flag(mol, includeRDKitSanitization=False) else mol
+    if chembl_exclude_flag(mol, includeRDKitSanitization=False):
+        note("chembl_exclude", "ChEMBL exclude flag set")
+        return None
+    return mol
 
 
 @safe_step
@@ -286,7 +282,10 @@ def _chembl_fragment_parent(
     parent, excluded = chembl_standardizer.get_fragment_parent_mol(
         mol, check_exclusion=exclude_by_chembl_standards, neutralize=neutralize
     )
-    return None if excluded else parent
+    if excluded:
+        note("chembl_fragment_parent", "ChEMBL exclude flag set")
+        return None
+    return parent
 
 
 def chembl_fragment_parent(
@@ -356,14 +355,22 @@ def papyrus_remove_salts(include_metals: bool = True) -> MolFn:
 @safe_step
 def papyrus_no_mixtures(mol: Mol) -> Mol | None:
     """None where `Chem.GetMolFrags` finds more than one fragment."""
-    return None if papyrus.is_mixture(mol) else mol
+    if papyrus.is_mixture(mol):
+        note(
+            "papyrus_no_mixtures", f"mixture of {len(Chem.GetMolFrags(mol))} fragments"
+        )
+        return None
+    return mol
 
 
 @safe_step
 def papyrus_only_organic(mol: Mol) -> Mol | None:
     """None where ChEMBL's `exclude_flag` is set, no C~C bond exists, or an
     element is outside {C,H,O,N,P,S,F,Cl,Br,I}."""
-    return mol if papyrus.is_organic(mol) else None
+    if papyrus.is_organic(mol):
+        return mol
+    note("papyrus_only_organic", "inorganic")
+    return None
 
 
 @safe_step

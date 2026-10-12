@@ -25,7 +25,7 @@ from typing import Any
 import polars as pl
 import pytest
 from rdkit import rdBase
-from rdkit.Chem import AddHs, Mol, MolFromSmiles, MolToSmiles
+from rdkit.Chem import Mol, MolFromSmiles, MolToSmiles
 
 from fairfetched.prep import mol_expr as me
 from fairfetched.prep.mol_expr import MolExpr
@@ -33,8 +33,6 @@ from fairfetched.prep.mol_functions import (
     MolFn,
     _binary_to_inchikey,
     chembl_standardize,
-    no_mixtures,
-    only_organic,
     remove_stereo,
     safe_step,
     valid_inchi,
@@ -703,58 +701,7 @@ class TestParentAndSize:
 
 
 class TestFilterSteps:
-    """These decide which molecules leave the dataset. Both `no_mixtures` and
-    `only_organic` log that they are untested naive implementations; this is
-    that test.
-    """
-
-    @pytest.mark.parametrize(
-        "smiles,kept",
-        [("CCO", True), ("CC(=O)Oc1ccccc1C(=O)O", True), ("[Na+].CC(=O)[O-]", False)],
-        ids=["ethanol", "aspirin", "sodium_acetate"],
-    )
-    def test_no_mixtures(self, smiles: str, kept: bool) -> None:
-        """Implemented as a "." check on the SMILES, which is why a salt counts
-        as a mixture. That is the intended reading for most datasets, but it
-        also drops anything else written as disconnected components.
-        """
-        assert (no_mixtures(mol(smiles)) is not None) == kept
-
-    @pytest.mark.parametrize(
-        "smiles,kept",
-        [
-            ("CCO", True),
-            ("ClCCBr", True),
-            ("[Fe]", False),
-            ("OB(O)c1ccccc1", False),
-            ("C[Si](C)C", False),
-        ],
-        ids=["ethanol", "halogenated", "iron", "boronic_acid", "silane"],
-    )
-    def test_only_organic(self, smiles: str, kept: bool) -> None:
-        """The element set is {C,N,O,F,P,S,Cl,Br,I}, so boron and silicon are
-        out. That rules out boronic acids and organosilicons, which a medicinal
-        chemist would call organic.
-
-        TODO: decide whether B, Si and Se belong in the set. Also fix the
-        docstring on only_organic -- it says "returns none if mol is organic",
-        which is the opposite of what the code does.
-        """
-        assert (only_organic(mol(smiles)) is not None) == kept
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="only_organic's element set omits atomic number 1, so any "
-        "molecule carrying explicit hydrogens is rejected",
-    )
-    def test_only_organic_accepts_explicit_hydrogens(self) -> None:
-        """Explicit hydrogens are normal after `Chem.AddHs`, which anything
-        doing 3D work will have called. Every such molecule is currently
-        dropped.
-
-        TODO: add 1 to the organic element set.
-        """
-        assert only_organic(AddHs(mol("CCO"))) is not None
+    """These decide which molecules leave the dataset."""
 
     def test_valid_inchi_keeps_representable_molecules(self) -> None:
         assert valid_inchi(mol(smi("aspirin_aromatic"))) is not None

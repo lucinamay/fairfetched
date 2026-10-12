@@ -1,37 +1,18 @@
-"""Failure records for `fairfetched.prep`: every step that returns None
-because it raised, and every warning a step chooses to emit, becomes one
-`logging` record on the `fairfetched.prep` logger that names the step,
-the molecule, the error, and the line of user code that built the expression.
+"""Failure records for `fairfetched.prep`: a step that raised (ERROR), a
+warning a step emits (WARNING), or a molecule a filter step drops (INFO), each
+naming step, molecule, reason and the user line that built the expression.
 
-Nothing has to be switched on. The records flow through whatever logging
-configuration exists; `FailureLedger` collects them into a DataFrame and
-`read_failure_log` recovers them from a log file written by any formatter.
+Every record goes to two independent sinks: every open `FailureCollector`
+(always, whatever the logging configuration) and the `fairfetched.prep` logger
+(subject to the user's level and handlers). `read_failure_log` parses the
+records back out of a log file written by any formatter.
 
-    >>> import logging; logging.basicConfig(filename="run.log")
-    >>> with FailureLedger() as ledger:
-    ...     out = df.with_columns(
-    ...         MolExpr.from_smiles("smiles").standardize(*STEPS_CHEMBL).to_inchikey()
-    ...     )
-    >>> ledger.frame()
-    shape: (2, 8)
-    ┌─────────────────────┬───────┬───────────┬────────┬──────────┬───────────────────┬───────┬─────────────────────────────┐
-    │ time                ┆ level ┆ file      ┆ lineno ┆ code     ┆ step              ┆ mol   ┆ error                       │
-    ├─────────────────────┼───────┼───────────┼────────┼──────────┼───────────────────┼───────┼─────────────────────────────┤
-    │ 2026-10-08 13:46:20 ┆ ERROR ┆ notebook… ┆ 3      ┆ out = d… ┆ _smiles_to_binary ┆ C1CC  ┆ SMILES Parse Error: unclos… │
-    │ 2026-10-08 13:46:20 ┆ ERROR ┆ notebook… ┆ 3      ┆ out = d… ┆ chembl_normalize  ┆ CCO[… ┆ ValueError: …               │
-    └─────────────────────┴───────┴───────────┴────────┴──────────┴───────────────────┴───────┴─────────────────────────────┘
-    >>> read_failure_log("run.log").equals(ledger.frame())
-    True
+    >>> with FailureCollector() as failures:
+    ...     out = df.with_columns(MolExpr.from_smiles("smiles").standardize(*STEPS_CHEMBL))
+    >>> failures.frame()  # columns: SCHEMA
 
 `mol` is the input text for parse failures and RDKit's canonical SMILES of the
-structure entering the failing expression otherwise, so a back-join uses
-`MolExpr.from_smiles("smiles").to_smiles()` on the source frame, or the raw
-column for parse failures:
-
-    >>> df.join(ledger.frame(), left_on="smiles", right_on="mol", how="inner")
-
-`parallel=True` workers collect their records and the parent re-emits them,
-so the ledger sees the same rows either way.
+structure entering the failing expression otherwise.
 """
 
 from __future__ import annotations
@@ -95,9 +76,11 @@ assert tuple(SCHEMA) == tuple(f.name for f in fields(Failure))
 _TEXT_SCHEMA = {**SCHEMA, "time": pl.String}
 _PARSE_TIME = pl.col("time").str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms")
 
-# (call site, element being processed) for the duration of one step call;
-# `_map` sets it per element, so `safure_step` never has to be told who failed
-_CONTEXT: ContextVar[tuple[CallSite, object]] = ContextVar("fairfetched_mol_context")
+# (call site, element being processed, records sink) for one step call; `_map`
+# sets it per element, so `safe_step` never has to be told who failed
+_CONTEXT: ContextVar[tuple[CallSite, object, list[Failure]]] = ContextVar(
+    "fairfetched_mol_context"
+)
 _UNKNOWN = CallSite("?", None, None)
 
 
@@ -128,8 +111,9 @@ def mol_id(element: object) -> str:
 
 
 def record(step: str, error: str, level: int = logging.ERROR) -> None:
-    """Emit one failure record for the element currently in `_CONTEXT`."""
-    site, element = _CONTEXT.get((_UNKNOWN, None))
+    """One failure record for the element currently in `_CONTEXT`; dispatched
+    at once when the step was called outside `call_collecting`."""
+    site, element, sink = _CONTEXT.get((_UNKNOWN, None, None))
     failure = Failure(
         time=datetime.now().isoformat(sep=" ", timespec="seconds"),  # noqa: DTZ005  # local, as logging's asctime
         level=logging.getLevelName(level),
@@ -140,36 +124,47 @@ def record(step: str, error: str, level: int = logging.ERROR) -> None:
         mol=mol_id(element),
         error=error,
     )
-    logger.log(level, failure.message(), extra={"failure": failure})
+    if sink is None:
+        dispatch([failure])
+    else:
+        sink.append(failure)
 
 
 def warn(step: str, message: str) -> None:
     record(step, message, logging.WARNING)
 
 
-def call_in_context(fn, site: CallSite, element):
-    """`fn(element)` with `_CONTEXT` naming `element` for any record it emits."""
-    token = _CONTEXT.set((site, element))
+def note(step: str, reason: str) -> None:
+    """INFO record"""
+    record(step, reason, logging.INFO)
+
+
+def call_collecting(fn, site: CallSite, element) -> tuple[object, list[Failure]]:
+    """`fn(element)` and the records it emitted, nothing logged: the parent
+    process dispatches them, so worker processes never touch the logger."""
+    sink: list[Failure] = []
+    token = _CONTEXT.set((site, element, sink))
     try:
-        return fn(element)
+        return fn(element), sink
     finally:
         _CONTEXT.reset(token)
 
 
-class FailureLedger(logging.Handler):
-    """Collects `Failure` records while attached; `with` attaches and detaches.
+def dispatch(failures: list[Failure]) -> None:
+    """Every record to every open `FailureCollector` and to the logger."""
+    levels = logging.getLevelNamesMapping()
+    for failure in failures:
+        for collector in _COLLECTORS:
+            collector.failures.append(failure)
+        logger.log(levels[failure.level], failure.message(), extra={"failure": failure})
 
-    `frame()` has one row per record with the `SCHEMA` columns.
-    """
+
+class FailureCollector:
+    """Receives every `Failure` recorded while open (`with`), independent of
+    the logging configuration; `frame()` has one row per record (`SCHEMA`)."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.failures: list[Failure] = []
-
-    def emit(self, record: logging.LogRecord) -> None:
-        failure = getattr(record, "failure", None)
-        if failure is not None:
-            self.failures.append(failure)
 
     def frame(self) -> pl.DataFrame:
         rows = [astuple(f) for f in self.failures]
@@ -178,42 +173,14 @@ class FailureLedger(logging.Handler):
         )
 
     def __enter__(self) -> Self:
-        logger.addHandler(self)
+        _COLLECTORS.append(self)
         return self
 
     def __exit__(self, *exc) -> None:
-        logger.removeHandler(self)
+        _COLLECTORS.remove(self)
 
 
-# --- parallel workers: records are collected per call and re-emitted by the parent ---
-
-_worker_ledger: FailureLedger | None = None
-
-
-def _worker_ledger_installed() -> FailureLedger:
-    global _worker_ledger
-    if _worker_ledger is None:
-        _worker_ledger = FailureLedger()
-        logger.addHandler(_worker_ledger)
-        logger.propagate = False  # the parent prints them, not the worker's stderr
-    return _worker_ledger
-
-
-def call_collecting(fn, site: CallSite, element) -> tuple[object, list[Failure]]:
-    """Worker-side `call_in_context` that returns the records it produced."""
-    ledger = _worker_ledger_installed()
-    ledger.failures.clear()
-    result = call_in_context(fn, site, element)
-    return result, list(ledger.failures)
-
-
-def reemit(failures: list[Failure]) -> None:
-    for failure in failures:
-        logger.log(
-            logging.getLevelName(failure.level),
-            failure.message(),
-            extra={"failure": failure},
-        )
+_COLLECTORS: list[FailureCollector] = []
 
 
 def read_failure_log(path: str | Path) -> pl.DataFrame:

@@ -12,13 +12,7 @@ import polars as pl
 if TYPE_CHECKING:
     from polars._typing import PolarsDataType
 
-from fairfetched.prep.failures import (
-    CallSite,
-    call_collecting,
-    call_in_context,
-    callsite,
-    reemit,
-)
+from fairfetched.prep.failures import CallSite, call_collecting, callsite, dispatch
 from fairfetched.prep.mol_functions import (
     Descriptors,
     MolFn,
@@ -75,39 +69,37 @@ def _map_nodedup(
     parallel: bool = False,
     site: CallSite | None = None,
 ) -> pl.Series:
-    """`fn` per element, each call in a failure-record context naming the
-    element and `site` (the user line that built the expression)."""
+    """`fn` per element; each call returns its result and its failure records,
+    which this (parent) process dispatches, naming `site` (the user line that
+    built the expression)."""
     site = site or callsite()
+    call = partial(call_collecting, fn, site)
     if parallel:
         try:
-            mp.set_start_method(
-                "spawn", force=True
-            )  # @TODO: check where else to put this that is not the main module
+            # global side effect: every later multiprocessing use in the program
+            # spawns too; the pool itself already spawns via `mp_context=_CTX`
+            mp.set_start_method("spawn", force=True)
             with ProcessPoolExecutor(_N_WORKERS, mp_context=_CTX) as pool:
                 pairs = list(
                     track(
-                        pool.map(
-                            partial(call_collecting, fn, site),
-                            series.to_list(),
-                            chunksize=256,
-                        ),
+                        pool.map(call, series.to_list(), chunksize=256),
                         desc=getattr(fn, "__name__", ""),
                         total=len(series),
                     )
                 )
-            for _, failures in pairs:
-                reemit(failures)
-            return pl.Series(series.name, [r for r, _ in pairs], dtype=return_dtype)
         except Exception:
+            # NOTE: the whole series is silently recomputed serially, and records
+            # from the partial pool are lost; raising here may be preferable
             logger.exception(
                 "'parallel' execution failed, resorting to native polars map_batches. "
                 "consider passing parallel=False, as this at least allows subdivision into batches"
             )
-    return pl.Series(
-        series.name,
-        tuple(call_in_context(fn, site, x) for x in series),
-        dtype=return_dtype,
-    )
+            pairs = [call(x) for x in series]
+    else:
+        pairs = [call(x) for x in series]
+    for _, failures in pairs:
+        dispatch(failures)
+    return pl.Series(series.name, [r for r, _ in pairs], dtype=return_dtype)
 
 
 def _map(
@@ -124,7 +116,9 @@ def _map(
     results = _map_nodedup(fn, unique, return_dtype, parallel=parallel, site=site)
     mapping = pl.DataFrame({"k": unique, "v": results})
     return (
-        series.to_frame("k").join(mapping, on="k", how="left")["v"].rename(series.name)
+        series.to_frame("k")
+        .join(mapping, on="k", how="left", maintain_order="left")["v"]
+        .rename(series.name)
     )
 
 
