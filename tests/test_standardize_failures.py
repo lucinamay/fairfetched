@@ -21,7 +21,7 @@ from rdkit.Chem.rdMolDescriptors import CalcExactMolWt
 
 from fairfetched.prep import failures as fx
 from fairfetched.prep.failures import (
-    SCHEMA,
+    Failure,
     FailureCollector,
     mol_id,
     read_failure_log,
@@ -327,7 +327,7 @@ class TestLogFile:
             root.removeHandler(handler)
             handler.close()
         out = read_failure_log(path)
-        assert out.schema == pl.Schema(SCHEMA)
+        assert out.schema == pl.Schema(Failure.schema())
         assert out.select("step", "mol", "error").rows() == [
             ("_smiles_to_binary", BAD, RDKIT_PARSE_ERROR),
             *[("boom", CANONICAL[s], "ValueError: kaboom") for s in GOOD],
@@ -351,4 +351,4 @@ class TestLogFile:
         path = tmp_path / "quiet.log"
         path.write_text("INFO something else\n")
         out = read_failure_log(path)
-        assert out.is_empty() and out.schema == pl.Schema(SCHEMA)
+        assert out.is_empty() and out.schema == pl.Schema(Failure.schema())

@@ -9,7 +9,7 @@ records back out of a log file written by any formatter.
 
     >>> with FailureCollector() as failures:
     ...     out = df.with_columns(MolExpr.from_smiles("smiles").standardize(*STEPS_CHEMBL))
-    >>> failures.frame()  # columns: SCHEMA
+    >>> failures.frame()  # one row per record, columns as `Failure`
 
 `mol` is the input text for parse failures and RDKit's canonical SMILES of the
 structure entering the failing expression otherwise.
@@ -21,11 +21,11 @@ import base64
 import logging
 import traceback
 from contextvars import ContextVar
-from dataclasses import astuple, dataclass, fields
+from dataclasses import astuple, dataclass
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Self
+from typing import Self, get_args, get_type_hints
 
 import polars as pl
 from rdkit.Chem import Mol, MolToSmiles
@@ -42,9 +42,12 @@ class CallSite:
     code: str | None
 
 
+_DTYPES = {datetime: pl.Datetime("us"), str: pl.String, int: pl.Int64}
+
+
 @dataclass(frozen=True)
 class Failure:
-    time: str
+    time: datetime
     level: str
     file: str
     lineno: int | None
@@ -52,6 +55,14 @@ class Failure:
     step: str
     mol: str
     error: str
+
+    @classmethod
+    def schema(cls) -> dict[str, pl.DataType]:
+        """polars dtypes from the field annotations above."""
+        return {
+            name: _DTYPES[(get_args(hint) or (hint,))[0]]  # `X | None` -> X
+            for name, hint in get_type_hints(cls).items()
+        }
 
     def message(self) -> str:
         """One line, tab-separated after `MARKER`, so any formatter keeps it parseable."""
@@ -62,20 +73,6 @@ class Failure:
         return MARKER + "\t".join(cells)
 
 
-SCHEMA = {
-    "time": pl.Datetime("ms"),
-    "level": pl.String,
-    "file": pl.String,
-    "lineno": pl.Int64,
-    "code": pl.String,
-    "step": pl.String,
-    "mol": pl.String,
-    "error": pl.String,
-}
-assert tuple(SCHEMA) == tuple(f.name for f in fields(Failure))
-_TEXT_SCHEMA = {**SCHEMA, "time": pl.String}
-_PARSE_TIME = pl.col("time").str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms")
-
 # (call site, element being processed, records sink) for one step call; `_map`
 # sets it per element, so `safe_step` never has to be told who failed
 _CONTEXT: ContextVar[tuple[CallSite, object, list[Failure]]] = ContextVar(
@@ -85,10 +82,9 @@ _UNKNOWN = CallSite("?", None, None)
 
 
 def callsite() -> CallSite:
-    """First stack frame outside the fairfetched package: the user line that
-    built the expression. In Jupyter the file is `.../ipykernel_<pid>/<n>.py`
-    with the cell source resolved by linecache; marimo and `python -i` give
-    `<cell-…>` or `<stdin>` and no source line."""
+    """The user's own line that built the expression: the innermost stack frame
+    outside fairfetched and polars. `code` is None where Python keeps no cell
+    source (marimo, `python -i`); Jupyter cells resolve."""
     for frame in reversed(traceback.extract_stack()):
         if frame.filename.startswith(_SKIP) or frame.filename == "<string>":
             continue  # fairfetched, polars (`.mol` namespace), dataclass __init__
@@ -97,9 +93,7 @@ def callsite() -> CallSite:
 
 
 def mol_id(element: object) -> str:
-    """Text identifying an input: the string itself, RDKit canonical SMILES for
-    mol binary, base64 of the binary where even SMILES writing fails (lossless:
-    `Chem.Mol(base64.b64decode(...))`)."""
+    """string->RDKit canonical SMILES->lossless binary"""
     if isinstance(element, str):
         return element
     if isinstance(element, bytes):
@@ -115,7 +109,7 @@ def record(step: str, error: str, level: int = logging.ERROR) -> None:
     at once when the step was called outside `call_collecting`."""
     site, element, sink = _CONTEXT.get((_UNKNOWN, None, None))
     failure = Failure(
-        time=datetime.now().isoformat(sep=" ", timespec="seconds"),  # noqa: DTZ005  # local, as logging's asctime
+        time=datetime.now(),  # noqa: DTZ005  # local, as logging's asctime
         level=logging.getLevelName(level),
         file=site.file,
         lineno=site.lineno,
@@ -161,16 +155,13 @@ def dispatch(failures: list[Failure]) -> None:
 
 class FailureCollector:
     """Receives every `Failure` recorded while open (`with`), independent of
-    the logging configuration; `frame()` has one row per record (`SCHEMA`)."""
+    the logging configuration; `frame()` has one row per record."""
 
     def __init__(self) -> None:
         self.failures: list[Failure] = []
 
     def frame(self) -> pl.DataFrame:
-        rows = [astuple(f) for f in self.failures]
-        return pl.DataFrame(rows, schema=_TEXT_SCHEMA, orient="row").with_columns(
-            _PARSE_TIME
-        )
+        return pl.DataFrame(self.failures, schema=Failure.schema())
 
     def __enter__(self) -> Self:
         _COLLECTORS.append(self)
@@ -191,13 +182,14 @@ def read_failure_log(path: str | Path) -> pl.DataFrame:
         for line in Path(path).read_text().splitlines()
         if (i := line.find(MARKER)) >= 0
     ]
+    schema = Failure.schema()
     if not lines:
-        return pl.DataFrame(schema=SCHEMA)
+        return pl.DataFrame(schema=schema)
     return pl.read_csv(
         StringIO("\n".join(lines)),
         separator="\t",
         has_header=False,
-        new_columns=list(SCHEMA),
-        schema_overrides=_TEXT_SCHEMA,
+        new_columns=list(schema),
+        schema=schema,
         quote_char=None,
-    ).with_columns(_PARSE_TIME)
+    )
