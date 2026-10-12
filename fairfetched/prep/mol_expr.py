@@ -70,8 +70,9 @@ def _map_nodedup(
     call = partial(call_collecting, fn, site)
     if parallel:
         try:
-            # global side effect: every later multiprocessing use in the program
-            # spawns too; the pool itself already spawns via `mp_context=_CTX`
+            # TODO(globals): delete; `mp_context=_CTX` below already spawns, and
+            # this mutates the process-wide default for every later pool but this
+            # was once added for a reason so we should triple check
             mp.set_start_method("spawn", force=True)
             with ProcessPoolExecutor(_N_WORKERS, mp_context=_CTX) as pool:
                 pairs = list(

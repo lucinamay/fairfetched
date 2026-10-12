@@ -48,6 +48,9 @@ class _LastMessage(logging.Handler):
         _RDKIT_MESSAGE.set(record.getMessage().strip().split("] ", 1)[-1])
 
 
+# TODO(globals): import-time reconfiguration of RDKit logging for the whole
+# process; move into a `functools.cache`d installer called at the top of the
+# `safe_step` wrapper (before `func` runs, or the first parse failure reads "")
 rdBase.LogToPythonLogger()
 logging.getLogger("rdkit").addHandler(_LastMessage())
 
