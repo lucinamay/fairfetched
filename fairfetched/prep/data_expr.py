@@ -35,7 +35,7 @@ DUPLICATE_KEYS = (
     "mutation",
     "organism_tgt",
 )
-_SKIP = "__skip__"
+_SKIP_COL = "__skip__"
 
 
 # --- row-level ---
@@ -138,7 +138,7 @@ def _is_unit_error(diff: pl.Expr, tol: float) -> pl.Expr:
 
 def _with_skip(lf: pl.LazyFrame, skip: pl.Expr | None) -> pl.LazyFrame:
     mask = pl.lit(False) if skip is None else skip.fill_null(False)
-    return lf.with_columns(mask.alias(_SKIP))
+    return lf.with_columns(mask.alias(_SKIP_COL))
 
 
 def _attach(
@@ -152,8 +152,8 @@ def _attach(
             how="left",
             maintain_order="left",
         )
-        .with_columns(pl.col(name).fill_null(False) & ~pl.col(_SKIP))
-        .drop(_SKIP)
+        .with_columns(pl.col(name).fill_null(False) & ~pl.col(_SKIP_COL))
+        .drop(_SKIP_COL)
     )
 
 
@@ -177,7 +177,7 @@ def flag_unit_annotation_errors(
     lf = _with_skip(lf, skip)
     keys = [mol, assay, value]
     points = (
-        lf.filter(~pl.col(_SKIP), pl.col(value).is_not_null()).select(keys).unique()
+        lf.filter(~pl.col(_SKIP_COL), pl.col(value).is_not_null()).select(keys).unique()
     )
     hits = (
         points.join(points, on=mol, suffix="_r")
@@ -218,7 +218,7 @@ def flag_low_assay_overlap(
     if min_overlap < 1:
         raise ValueError(f"min_overlap must be >= 1, got {min_overlap}")
     lf = _with_skip(lf, skip)
-    rows = lf.remove(pl.col(_SKIP)).select(target, assay, mol, doc, value).unique()
+    rows = lf.remove(pl.col(_SKIP_COL)).select(target, assay, mol, doc, value).unique()
     a_r, d_r, v_r = f"{assay}_r", f"{doc}_r", f"{value}_r"
     partners = (
         rows.join(rows, on=[target, mol], suffix="_r")
