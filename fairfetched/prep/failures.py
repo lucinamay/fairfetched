@@ -42,16 +42,10 @@ class CallSite:
     code: str | None
 
 
-_DTYPES = {datetime: pl.Datetime("us"), str: pl.String, int: pl.Int64}
-
-
 @dataclass(frozen=True)
-class Failure:
+class Failure(CallSite):
     time: datetime
     level: str
-    file: str
-    lineno: int | None
-    code: str | None
     step: str
     mol: str
     error: str
@@ -59,8 +53,9 @@ class Failure:
     @classmethod
     def schema(cls) -> dict[str, pl.DataType]:
         """polars dtypes from the field annotations above."""
+        dtypes = {datetime: pl.Datetime("us"), str: pl.String, int: pl.Int64}
         return {
-            name: _DTYPES[(get_args(hint) or (hint,))[0]]  # `X | None` -> X
+            name: dtypes[(get_args(hint) or (hint,))[0]]  # `X | None` -> X
             for name, hint in get_type_hints(cls).items()
         }
 
@@ -109,11 +104,9 @@ def record(step: str, error: str, level: int = logging.ERROR) -> None:
     at once when the step was called outside `call_collecting`."""
     site, element, sink = _CONTEXT.get((_UNKNOWN, None, None))
     failure = Failure(
+        *astuple(site),
         time=datetime.now(),  # noqa: DTZ005  # local, as logging's asctime
         level=logging.getLevelName(level),
-        file=site.file,
-        lineno=site.lineno,
-        code=site.code,
         step=step,
         mol=mol_id(element),
         error=error,
