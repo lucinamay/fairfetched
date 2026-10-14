@@ -1,0 +1,49 @@
+{
+  "command": "capricho get --target-ids CHEMBL281 --calculate-pchembl --chembl-version 36 --chembl-release 30 --bioactivity-type Ki,IC50 --standard-units nM,uM --standard-relation =,<,> --confidence-scores 8,9 --require-doc-date --min-assay-overlap 3 --no-chirality --drop-unassigned-chiral --dont-curate-annotation-errors --output-path CHEMBL281_nondefault_data.csv --compound-equality inchikey",
+  "capricho version": "1.0.4",
+  "molecule_ids": [],
+  "target_ids": [
+    "CHEMBL281"
+  ],
+  "assay_ids": [],
+  "document_ids": [],
+  "calculate_pchembl": true,
+  "output_path": "CHEMBL281_nondefault_data.csv",
+  "confidence_scores": [
+    8,
+    9
+  ],
+  "bioactivity_type": [
+    "Ki",
+    "IC50"
+  ],
+  "chirality": false,
+  "drop_unassigned_chiral": true,
+  "curate_annotation_errors": false,
+  "standard_relation": [
+    "=",
+    "<",
+    ">"
+  ],
+  "standard_units": [
+    "nM",
+    "uM"
+  ],
+  "assay_types": [
+    "B",
+    "F"
+  ],
+  "chembl_release": 30,
+  "metadata_columns": [],
+  "id_columns": [],
+  "skip_not_aggregated": false,
+  "aggregate_mutants": false,
+  "skip_recipe": false,
+  "chembl_backend": "downloader",
+  "chembl_version": "36",
+  "require_doc_date": true,
+  "min_assay_overlap": 3,
+  "strict_mutant_removal": false,
+  "compound_equality": "inchikey",
+  "value_column": "pchembl_value"
+}

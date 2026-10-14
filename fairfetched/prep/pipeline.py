@@ -248,10 +248,30 @@ def papyrus_canonical_tautomer(
     )
 
 
+# --- chemFilters (CAPRICHO) ---
+
+
+@safe_step
+def chemfilters_chembl(mol: Mol) -> Mol | None:
+    """chemFilters `ChemStandardizer(method="chembl")`, CAPRICHO 1.0.4's
+    structure step: `get_parent_mol` (neutralize, check_exclusion; an excluded
+    parent keeps its salts) and then `standardize_mol` (check_exclusion), the
+    reverse of `STEPS_CHEMBL_PARENT`. A valence or type error in
+    `get_parent_mol` skips it; one in `standardize_mol` gives None."""
+    try:
+        parent = chembl_get_parent_mol(mol, neutralize=True, check_exclusion=True)[0]
+    except (Chem.rdchem.AtomValenceException, TypeError):
+        parent = mol
+    standard = _chembl_standardize(parent, check_exclusion=True, sanitize=True)
+    Chem.SanitizeMol(standard)
+    return standard
+
+
 # --- step lists ---
 
 STEPS_CHEMBL: list[MolFn] = [chembl_standardize]
 STEPS_CHEMBL_PARENT: list[MolFn] = [chembl_standardize, get_parent]
+STEPS_CAPRICHO: list[MolFn] = [chemfilters_chembl]
 # `standardize_mol` as one step per library call, in library order.
 # `standardize_mol(check_exclusion=True)` returns an excluded mol untouched; a
 # step list cannot branch, so this list equals `check_exclusion=False`, and

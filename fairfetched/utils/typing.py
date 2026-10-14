@@ -1,22 +1,7 @@
 from pathlib import Path
-from typing import Any, NotRequired, Protocol, TypedDict
+from typing import Any, Protocol
 
 from polars import LazyFrame
-
-
-class BioactivityDBViews(TypedDict):
-    """a dictionary with different 'views' from raw cheminformatics
-    databases, as lazyframes.
-    requires at minimum a bioactivity and compounds dataframe
-    """
-
-    bioactivity: LazyFrame
-    compounds: LazyFrame
-    bioactivity_nostereochemistry: NotRequired[LazyFrame]
-    full: NotRequired[LazyFrame]
-    full_nostereochemistry: NotRequired[LazyFrame]
-    proteins: NotRequired[LazyFrame]
-    components: NotRequired[LazyFrame]
 
 
 class DatasetGetModule(Protocol):
@@ -60,7 +45,7 @@ class DatasetGetModule(Protocol):
         """Scan table files and apply dataset-specific cleanup."""
         ...
 
-    def build_views(self, parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+    def build_views(self, parquet_paths: dict[str, Path]) -> dict[str, LazyFrame]:
         """Build comprehensive lazy views through joins and pivots."""
         ...
 

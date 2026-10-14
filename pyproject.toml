@@ -22,6 +22,7 @@ standardise = [
     # papyrus-structure-pipeline is copied into prep/papyrus.py; dev tests against it
 ]
 split = [
+    "chemsplit>=0.1.2",
     "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
 ]
@@ -80,6 +81,7 @@ dev = [
     "rust-just>=1.46.0",
     "ruff>=0.16.10",
     "pyright>=1.1.414",
+    "marimo>=0.25.1",
 ]
 
 

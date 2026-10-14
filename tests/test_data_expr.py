@@ -3,6 +3,7 @@
 runs CAPRICHO itself (`uv run --group capricho pytest`); its strict xfails are the
 documented divergences."""
 
+import math
 import random
 import re
 from collections import defaultdict
@@ -107,29 +108,40 @@ def ref_low_overlap(rows: list[dict], min_overlap: int, skip: list[bool]) -> lis
             for b in assays:
                 if a >= b:
                     continue
-                shared = {
-                    x[MOL]
+                n_pairs = sum(  # null doc or value counts as different
+                    x[MOL] == y[MOL]
+                    and (None in (x[DOC], y[DOC]) or x[DOC] != y[DOC])
+                    and (
+                        None in (x[VALUE], y[VALUE])
+                        or (
+                            x[VALUE] != y[VALUE]
+                            and not ref_is_unit_error(x[VALUE], y[VALUE])
+                        )
+                    )
                     for x in by_assay[a]
                     for y in by_assay[b]
-                    if x[MOL] == y[MOL]
-                    and None not in (x[DOC], y[DOC], x[VALUE], y[VALUE])
-                    and x[DOC] != y[DOC]
-                    and x[VALUE] != y[VALUE]
-                    and not ref_is_unit_error(x[VALUE], y[VALUE])
-                }
-                if len(shared) >= min_overlap:
+                )
+                if n_pairs >= min_overlap:
                     partnered |= {a, b}
         flagged |= set(assays) - partnered
     return [r[ASSAY] in flagged and not s for r, s in zip(rows, skip, strict=True)]
 
 
-def ref_cross_document(rows: list[dict], keys=KEYS) -> list[bool]:
+def ref_cross_document(
+    rows: list[dict], keys=KEYS, skip: list[bool] | None = None
+) -> list[bool]:
+    skip = skip or [False] * len(rows)
+    counted = [  # a null key is left out, as pandas groupby
+        r[RELATION] == "=" and not s and None not in (r[k] for k in keys)
+        for r, s in zip(rows, skip, strict=True)
+    ]
     docs = defaultdict(set)
-    for r in rows:
-        if r[RELATION] == "=":
+    for r, c in zip(rows, counted, strict=True):
+        if c:
             docs[tuple(r[k] for k in keys)].add(r[DOC])
     return [
-        r[RELATION] == "=" and len(docs[tuple(r[k] for k in keys)]) > 1 for r in rows
+        c and len(docs[tuple(r[k] for k in keys)]) > 1
+        for r, c in zip(rows, counted, strict=True)
     ]
 
 
@@ -139,6 +151,31 @@ def ref_assay_size(rows: list[dict]) -> list[int]:
         if r[MOL] is not None:
             mols[r[ASSAY]].add(r[MOL])
     return [len(mols[r[ASSAY]]) for r in rows]
+
+
+def ref_pchembl(value: float | None, units: str | None) -> float | None:
+    """-log10 of `value` in mol/L; None where CAPRICHO gives NaN."""
+    per_molar = {"nM": 1e9, "uM": 1e6, "µM": 1e6, "mM": 1e3}
+    if value is None or value <= 0 or units not in per_molar:
+        return None
+    return -math.log10(value / per_molar[units])
+
+
+# rows the pChEMBL tests share: molar units, zero/negative/null values, other units
+PCHEMBL_ROWS = [
+    (230.0, "nM"),
+    (61.9, "nM"),
+    (0.65, "uM"),
+    (3.91, "µM"),
+    (1.2, "mM"),
+    (398107.17, "nM"),
+    (0.0, "nM"),
+    (-5.0, "nM"),
+    (None, "nM"),
+    (10.0, None),
+    (10.0, "%"),
+    (10.0, "ug.mL-1"),
+]
 
 
 # --- tests ---
@@ -239,7 +276,7 @@ class TestAssaySize:
 class TestCrossDocumentDuplicate:
     @pytest.mark.parametrize("seed", range(5))
     def test_matches_reference(self, seed):
-        df = _frame(seed, n_mols=6)
+        df = _frame(seed, n=300, n_mols=4)
         expected = ref_cross_document(df.rows(named=True))
         assert any(expected) and not all(expected)
         expr = de.is_cross_document_duplicate(KEYS, doc=DOC, relation=RELATION)
@@ -256,6 +293,18 @@ class TestCrossDocumentDuplicate:
         expr = de.is_cross_document_duplicate(keys, doc=DOC, relation=RELATION)
         assert ref_cross_document(df.rows(named=True), keys) == [False] * 3
         assert _flag(df, expr) == [False] * 3
+
+    @pytest.mark.parametrize("seed", range(5))
+    def test_skipped_rows_neither_flagged_nor_counted(self, seed):
+        """Skipping document D1 removes the partner of some D1/D2 duplicates."""
+        df = _frame(seed, n=300, n_mols=4).with_columns(skip=pl.col(DOC) == "D1")
+        rows = df.rows(named=True)
+        expected = ref_cross_document(rows, skip=[r["skip"] for r in rows])
+        assert expected != ref_cross_document(rows)
+        expr = de.is_cross_document_duplicate(
+            KEYS, doc=DOC, relation=RELATION, skip=pl.col("skip")
+        )
+        assert _flag(df, expr) == expected
 
 
 class TestUnitAnnotationErrors:
@@ -291,7 +340,7 @@ class TestUnitAnnotationErrors:
 
 
 class TestLowAssayOverlap:
-    @pytest.mark.parametrize(("seed", "min_overlap"), [(0, 2), (1, 3), (2, 4), (3, 3)])
+    @pytest.mark.parametrize(("seed", "min_overlap"), [(0, 5), (1, 4), (2, 4), (3, 3)])
     def test_matches_reference(self, seed, min_overlap):
         df = _frame(seed, n=120, n_mols=40)
         expected = ref_low_overlap(
@@ -340,6 +389,31 @@ class TestLowAssayOverlap:
     def test_rejects_min_overlap_below_one(self):
         with pytest.raises(ValueError, match="min_overlap"):
             de.flag_low_assay_overlap(pl.LazyFrame(), 0)
+
+
+class TestPchembl:
+    def test_matches_reference(self):
+        df = pl.DataFrame(
+            PCHEMBL_ROWS, schema=["standard_value", "standard_units"], orient="row"
+        )
+        out = df.select(de.pchembl())["standard_value"].to_list()
+        expected = [ref_pchembl(v, u) for v, u in PCHEMBL_ROWS]
+        assert [x is None for x in out] == [x is None for x in expected]
+        assert [x for x in out if x is not None] == pytest.approx(
+            [x for x in expected if x is not None], rel=1e-12
+        )
+
+    def test_powers_of_ten_are_exact(self):
+        """1 nM is pChEMBL 9.0 as ChEMBL stores it; -log10(1e-9) is 8.999999999999998."""
+        rows = [(1.0, "nM"), (10.0, "nM"), (1.0, "uM"), (1.0, "µM"), (1.0, "mM")]
+        df = pl.DataFrame(rows, schema=["standard_value", "standard_units"], orient="row")
+        assert df.select(de.pchembl())["standard_value"].to_list() == [
+            9.0,
+            8.0,
+            6.0,
+            6.0,
+            3.0,
+        ]
 
 
 class TestAgainstCapricho:
@@ -401,10 +475,7 @@ class TestAgainstCapricho:
     def test_cross_document_without_null_keys(self, seed):
         self._cross_document(_frame(seed, n_mols=6, nulls=False))
 
-    @pytest.mark.xfail(
-        strict=True, reason="CAPRICHO's pandas groupby drops rows with a null key"
-    )
-    def test_cross_document_with_null_mutation(self):
+    def test_cross_document_with_null_key(self):
         self._cross_document(_frame(0, n_mols=6))
 
     def _overlap(self, df: pl.DataFrame, min_overlap: int):
@@ -420,13 +491,10 @@ class TestAgainstCapricho:
             pdf, "Insufficient assay overlap"
         )
 
-    @pytest.mark.parametrize(("seed", "min_overlap"), [(0, 2), (1, 3), (2, 4)])
-    def test_overlap_without_nulls_or_repeats(self, seed, min_overlap):
-        self._overlap(
-            _frame(seed, n=120, n_mols=40, nulls=False, repeats=False), min_overlap
-        )
+    @pytest.mark.parametrize(("seed", "min_overlap"), [(0, 5), (1, 4), (2, 4)])
+    def test_overlap(self, seed, min_overlap):
+        self._overlap(_frame(seed, n=120, n_mols=40), min_overlap)
 
-    @pytest.mark.xfail(strict=True, reason="CAPRICHO counts row pairs, not molecules")
     def test_overlap_with_repeated_measurements(self):
         df = pl.DataFrame(
             {
@@ -439,9 +507,6 @@ class TestAgainstCapricho:
         )
         self._overlap(df, 2)
 
-    @pytest.mark.xfail(
-        strict=True, reason="CAPRICHO counts a null document or value as differing"
-    )
     def test_overlap_with_null_document(self):
         df = pl.DataFrame(
             {
@@ -453,6 +518,41 @@ class TestAgainstCapricho:
             }
         )
         self._overlap(df, 1)
+
+    def test_overlap_with_null_value(self):
+        df = pl.DataFrame(
+            {
+                MOL: ["M1", "M1"],
+                ASSAY: ["A1", "A2"],
+                TARGET: ["T1"] * 2,
+                DOC: ["D1", "D2"],
+                VALUE: [6.0, None],
+            }
+        )
+        self._overlap(df, 1)
+
+    def test_fragments_without_salts(self):
+        from Capricho.core.smiles_utils import (  # pyright: ignore[reportMissingImports]
+            clean_mixtures,
+        )
+
+        smiles = [
+            "CCO",
+            "CCO.CCO",
+            "CCO.CCN",
+            "CCO.[Na+]",
+            "[Br-].[K+]",
+            "CCO.[O-][Cl+3]([O-])([O-])[O-]",
+            "CCO.c1ccncc1.O",
+            "CCO.Ca++",
+            "CCO.Ca+",
+            "CCO.[Na+",
+            "C.CCO",
+        ]
+        df = pl.DataFrame({"s": smiles})
+        out = df.select(de.fragments_without_salts("s"))["s"].to_list()
+        expected = [sorted(filter(None, clean_mixtures(s).split("."))) for s in smiles]
+        assert [sorted(f) for f in out] == expected
 
     def test_row_flags(self):
         from Capricho.chembl import (  # pyright: ignore[reportMissingImports]
@@ -492,3 +592,41 @@ class TestAgainstCapricho:
         for capricho_fn, expr, comment in cases:
             pdf = capricho_fn(df.to_pandas())
             assert _flag(df, expr) == self._capricho_flag(pdf, comment), comment
+
+    def _pchembl(self, float32: bool) -> tuple[list, list]:
+        """fairfetched vs CAPRICHO `convert_to_log10`; `float32` casts
+        `standard_value` as CAPRICHO `process_bioactivities` does first."""
+        from Capricho.chembl.processing import convert_to_log10
+
+        df = pl.DataFrame(
+            PCHEMBL_ROWS, schema=["standard_value", "standard_units"], orient="row"
+        ).with_columns(
+            row=pl.int_range(pl.len()),
+            pchembl_value=pl.lit(None, pl.Float64),
+            target_chembl_id=pl.lit("T"),
+            assay_chembl_id=pl.lit("A"),
+            assay_type=pl.lit("B"),
+            molecule_chembl_id=pl.lit("M"),
+        )
+        pdf = df.to_pandas()
+        if float32:
+            pdf = pdf.astype({"standard_value": "float32"})
+        pdf = convert_to_log10(pdf).sort_values("row")
+        theirs = [None if math.isnan(x) else x for x in pdf["pchembl_value"].tolist()]
+        return df.select(de.pchembl())["standard_value"].to_list(), theirs
+
+    def test_pchembl(self):
+        ours, theirs = self._pchembl(float32=False)
+        assert [x is None for x in ours] == [x is None for x in theirs]
+        assert [x for x in ours if x is not None] == pytest.approx(
+            [x for x in theirs if x is not None], rel=1e-12
+        )
+
+    @pytest.mark.xfail(
+        strict=True, reason="CAPRICHO casts standard_value to float32 (~1e-7 off)"
+    )
+    def test_pchembl_after_float32_cast(self):
+        ours, theirs = self._pchembl(float32=True)
+        assert [x for x in ours if x is not None] == pytest.approx(
+            [x for x in theirs if x is not None], rel=1e-12
+        )

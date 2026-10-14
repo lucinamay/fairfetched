@@ -15,7 +15,6 @@ from fairfetched.utils import (
     lowercase_columns,
     raw,
 )
-from fairfetched.utils.typing import BioactivityDBViews
 
 _lg = lg.getLogger(__name__)
 
@@ -30,8 +29,8 @@ def _format_version(version: float | str) -> str:
     if not isinstance(version, str):
         try:
             version = str(version)
-        except Exception:
-            raise TypeError(f"invalid version type: {type(version)}")
+        except (TypeError, ValueError) as e:
+            raise TypeError(f"invalid version type: {type(version)}") from e
 
     version = version.lstrip("0")
     if "." in version:
@@ -170,7 +169,7 @@ def _required_tables(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     return {name: scanned[name] for name in _REQUIRED}
 
 
-def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     """Build joined domain views from the raw ChEMBL SQLite tables.
 
     Table and column names are those of the ChEMBL schema
@@ -370,9 +369,12 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
         validate="m:1",
     )
     out = out.join(_target_accessions(lfs), on="tid", how="left", validate="m:1")
+    docs = lfs["docs"]
+    if "chembl_release_id" not in docs.collect_schema().names():
+        _lg.warning("docs.chembl_release_id exists from ChEMBL 33 on; filled with null")
+        docs = docs.with_columns(chembl_release_id=pl.lit(None, pl.Int64))
     out = out.join(
-        lfs["docs"]
-        .select(
+        docs.select(
             "doc_id",
             "journal",
             "year",
@@ -382,8 +384,7 @@ def _bioactivities(lfs: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
             "title",
             "doc_type",
             "chembl_release_id",  # CAPRICHO filters activities by release
-        )
-        .rename({"chembl_id": "document_chembl_id"}),
+        ).rename({"chembl_id": "document_chembl_id"}),
         on="doc_id",
         how="left",
         validate="m:1",

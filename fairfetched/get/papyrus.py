@@ -18,7 +18,6 @@ from fairfetched.utils import (
     raw,
 )
 from fairfetched.utils.raw import scan_raw
-from fairfetched.utils.typing import BioactivityDBViews
 
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
     "05.6": {
@@ -95,7 +94,7 @@ def _clean(lf: pl.LazyFrame) -> pl.LazyFrame:
 cleanly_scan_parquet_tables = partial(raw.scan_parquets, clean=_clean)
 
 
-def build_views(parquet_paths: dict[str, Path]) -> BioactivityDBViews:
+def build_views(parquet_paths: dict[str, Path]) -> dict[str, pl.LazyFrame]:
     """Build joined domain views from the scanned source tables."""
     lfs = cleanly_scan_parquet_tables(parquet_paths)
     return {

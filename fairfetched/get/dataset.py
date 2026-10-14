@@ -4,9 +4,10 @@ from functools import cached_property
 from pathlib import Path
 from typing import Self
 
-from polars import LazyFrame
+from polars import LazyFrame, scan_parquet
 
 from fairfetched.get import (
+    _capricho,
     _demo,
     adrecs,
     adrecs_target,
@@ -37,6 +38,7 @@ class _View:
     """Joined domain views, built once from the raw tables."""
 
     def __init__(self, owner: "_Base") -> None:
+        self._owner = owner
         self._views = owner.module.build_views(owner.parquet_paths)
 
     def __repr__(self) -> str:
@@ -60,11 +62,18 @@ class _ChemblView(_View):
     def components(self) -> LazyFrame:
         return self._views["components"]
 
-    def capricho(self, **params) -> LazyFrame:
+    def capricho(self, cache_dir: Path | str | None = None, **params) -> LazyFrame:
         """`bioactivity` with CAPRICHO `drop_*` / `note_*` flags, scanned from a
         cache parquet written on first call (see `fairfetched.get._capricho.flag`
-        for `params`)."""
-        raise NotImplementedError
+        for `params`; default `cache_dir` is `BASE_DIR/_cache`)."""
+        path = _capricho.ensure_flagged(
+            self.bioactivity,
+            self._owner.lfs,
+            self._owner.version,
+            cache_dir,
+            **params,
+        )
+        return scan_parquet(path)
 
 
 class _PapyrusView(_View):
