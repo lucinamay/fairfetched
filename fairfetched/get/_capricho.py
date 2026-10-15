@@ -2,9 +2,8 @@
 written once to a cache parquet that every view then scans.
 
 Rows are flagged, not dropped; drop with
-`lf.remove(pl.any_horizontal(cs.starts_with("drop_")))`.
+`lf.remove(pl.any_horizontal(cs.starts_with("drop_")))`, then `aggregate`.
 
-TODO: aggregation (CAPRICHO `aggregate_data`).
 TODO: unit conversion (CAPRICHO `unit_conversions.py`).
 TODO: engine="duckdb" for the self-join flags, pending `dev/bench_capricho.py`.
 """
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 import polars as pl
+import polars.selectors as cs
 
 from fairfetched.prep import data_expr as de
 from fairfetched.utils import BASE_DIR
@@ -108,8 +108,9 @@ def _with_assay_size(
 def _with_mol_flags(
     lf: pl.LazyFrame, chirality: bool, drop_unassigned_chiral: bool, parallel: bool
 ) -> pl.LazyFrame:
-    """Standardize distinct `canonical_smiles` and add flags, each step as
-    CAPRICHO 1.0.4 `get_standardize_and_clean_workflow`:
+    """Standardize distinct `canonical_smiles` into `standard_smiles` (salts
+    removed by `clean_mixtures`) and add flags, each step as CAPRICHO 1.0.4
+    `get_standardize_and_clean_workflow`:
 
     - chemFilters `ChemStandardizer(method="chembl")` (`STEPS_CAPRICHO`):
       chembl_structure_pipeline `get_parent_mol`, then `standardize_mol`.
@@ -135,12 +136,10 @@ def _with_mol_flags(
     source = MolExpr.from_smiles("canonical_smiles", **kw)
     steps = STEPS_CAPRICHO if chirality else [*STEPS_CAPRICHO, remove_stereo]
     parent = MolExpr.col(_PARENT)
+    fragments = de.fragments_without_salts(parent.to_smiles(parallel))
     flags = {
         "drop_standardization_failed": pl.col(_PARENT).is_null()
         & pl.col("canonical_smiles").is_not_null(),
-        "drop_mixture": (
-            de.fragments_without_salts(parent.to_smiles(parallel)).list.len() != 1
-        ).fill_null(False),
     }
     if drop_unassigned_chiral:
         undefined = parent.num_undefined_stereocenters(**kw) > 0
@@ -149,7 +148,11 @@ def _with_mol_flags(
         flags["note_stereo_removed"] = source.has_stereo(**kw).fill_null(False)
     return (
         lf.with_columns(source.standardize(*steps, **kw).alias(_PARENT))
-        .with_columns(**flags)
+        .with_columns(**flags, standard_smiles=fragments)
+        .with_columns(
+            drop_mixture=(pl.col("standard_smiles").list.len() != 1).fill_null(False),
+            standard_smiles=pl.col("standard_smiles").list.join("."),
+        )
         .drop(_PARENT)
     )
 
@@ -193,7 +196,7 @@ def flag(
     (`drop_missing_year`) take no part in the cross-document and overlap flags,
     as CAPRICHO removes them before those. `curate_annotation_errors` adds
     `drop_unit_annotation_error`. `mol_flags` standardizes every distinct
-    structure with RDKit (`_with_mol_flags`; ~4 ms each, ~3 h for all of ChEMBL
+    structure with RDKit into `standard_smiles`, which `aggregate` needs (`_with_mol_flags`; ~4 ms each, ~3 h for all of ChEMBL
     on one process; `parallel` uses cpu_count // 2.2 processes); `chirality` and
     `drop_unassigned_chiral` need it. Values stay float64; CAPRICHO's float32
     cast makes it miss unit annotation errors (284 of 6181 ADORA3 rows).
@@ -276,6 +279,160 @@ def flag(
             name="drop_low_assay_overlap",
         )
     return lf
+
+
+CompoundEquality = Literal["inchikey", "inchi", "connectivity", "smiles"]
+MULTIVAL = (  # CAPRICHO `multiple_value_cols` and `include_metadata`, view names
+    "standard_smiles",
+    "canonical_smiles",
+    "standard_value",
+    "standard_units",
+    "assay_chembl_id",
+    "description_assay",
+    "activity_id",
+    "assay_type",
+    "standard_type",
+    "confidence_score",
+    "organism_tgt",
+    "molecule_chembl_id",
+    "document_chembl_id",
+    "assay_tissue",
+    "assay_cell_type",
+    "relationship_type",
+    "doc_type",
+    "doi",
+    "journal",
+    "year",
+    "chembl_release_id",
+    "activity_comment",
+)
+_KEY = "__key__"
+
+
+def _identifier(smiles: str, equality: CompoundEquality, parallel: bool) -> pl.Expr:
+    """Compound identifier from a SMILES column, as CAPRICHO `_identifier_map`."""
+    from fairfetched.prep.mol_expr import MolExpr
+
+    if equality == "smiles":
+        return pl.col(smiles)
+    mol = MolExpr.from_smiles(smiles, parallel, dedup=True)
+    if equality == "inchi":
+        return mol.to_inchi(parallel)
+    inchikey = mol.to_inchikey(parallel)
+    return inchikey.str.slice(0, 14) if equality == "connectivity" else inchikey
+
+
+def _stats(value: str) -> dict[str, pl.Expr]:
+    """`<value>_mean`, `_std`, `_median`, `_counts` per group, as CAPRICHO
+    `assign_stats`: geometric mean and std (scipy `gmean`, `gstd`) of the
+    pChEMBL values themselves, arithmetic otherwise; censored and single-row
+    groups take the first value."""
+    v = pl.col(value)
+    if value == "pchembl_value":
+        mean, std = v.log().mean().exp(), v.log().std().exp()
+    else:
+        mean, std = v.mean(), v.std(ddof=0)
+    first_only = (pl.col("standard_relation").first() != "=") | (pl.len() == 1)
+    first = v.first()
+    return {
+        f"{value}_mean": pl.when(first_only).then(first).otherwise(mean),
+        f"{value}_std": pl.when(first_only).then(None).otherwise(std),
+        f"{value}_median": pl.when(first_only).then(first).otherwise(v.median()),
+        f"{value}_counts": pl.len(),
+    }
+
+
+def aggregate(
+    lf: pl.LazyFrame,
+    *,
+    chirality: bool = True,
+    compound_equality: CompoundEquality = "inchikey",
+    value: str = "pchembl_value",
+    extra_id_cols: Sequence[str] = (),
+    extra_multival_cols: Sequence[str] = (),
+    aggregate_mutants: bool = False,
+    parallel: bool = False,
+) -> pl.LazyFrame:
+    """One row per compound, `target_chembl_id`, `standard_relation` (null as
+    "="), `mutation` (null as "WT"; unless `aggregate_mutants`) and
+    `extra_id_cols`, as
+    CAPRICHO 1.0.4 `aggregate_data`. Needs `standard_smiles`
+    (`flag(mol_flags=True)`); aggregates every row given, so drop flagged rows
+    first.
+
+    Compounds are equal by `compound_equality` of `standard_smiles`, with stereo
+    removed first unless `chirality` (always for "connectivity"); censored rows
+    (relation not "=") only join rows with the same relation and `value`
+    (rounded to 2 decimals for pChEMBL, else 4). `MULTIVAL`, `value`, the
+    `drop_*` / `note_*` flags and `extra_multival_cols` become lists in row
+    order, `standard_smiles` as `processed_smiles`; `smiles` is its first entry,
+    canonicalized again.
+    Adds `_stats(value)`, `connectivity` (and `inchikey` / `inchi` when that is
+    the equality), `shared_identifier_group` (rows sharing identifier and target
+    but split by mutation or `extra_id_cols`; dense from 1, else null) and, when
+    stereo is removed, `might_be_racemic` (the compound has more than one row).
+
+    Stats run on the float values; CAPRICHO first rounds them to 2 decimals.
+    """
+    from fairfetched.prep.mol_expr import MolExpr
+
+    keep_stereo = chirality and compound_equality != "connectivity"
+    if not keep_stereo:
+        lf = lf.with_columns(
+            standard_smiles=MolExpr.from_smiles("standard_smiles", parallel, dedup=True)
+            .remove_stereo(parallel, dedup=True)
+            .to_smiles(parallel)
+        )
+    relation = pl.col("standard_relation").fill_null("=")
+    decimals = 2 if value == "pchembl_value" else 4
+    key = _identifier("standard_smiles", compound_equality, parallel)
+    censored_key = pl.format("{}_{}_{}", key, relation, pl.col(value).round(decimals))
+    ids = [*extra_id_cols, "target_chembl_id", "standard_relation"]
+    multival = [value, *(c for c in MULTIVAL if c != value), *extra_multival_cols]
+    if aggregate_mutants:
+        multival.append("mutation")
+    else:
+        ids.append("mutation")
+    out = (
+        lf.with_columns(
+            standard_relation=relation,
+            mutation=pl.col("mutation").fill_null("WT"),  # as CAPRICHO's downloader
+            **{_KEY: pl.when(relation != "=").then(censored_key).otherwise(key)},
+        )
+        .group_by(_KEY, *ids, maintain_order=True)
+        .agg(
+            *multival,
+            cs.starts_with("drop_", "note_"),
+            **_stats(value),
+        )
+        .with_columns(smiles=pl.col("standard_smiles").list.first())
+        .with_columns(  # again, as RDKit canonical SMILES is not idempotent
+            smiles=MolExpr.from_smiles("smiles", parallel, dedup=True).to_smiles(
+                parallel
+            )
+        )
+        .rename({"standard_smiles": "processed_smiles"})
+        .with_columns(
+            connectivity=_identifier("smiles", "connectivity", parallel),
+            **(
+                {compound_equality: _identifier("smiles", compound_equality, parallel)}
+                if compound_equality in ("inchikey", "inchi")
+                else {}
+            ),
+        )
+    )
+    shared = pl.len().over(compound_equality, "target_chembl_id") > 1
+    out = out.with_columns(
+        shared_identifier_group=pl.when(shared)
+        .then(pl.struct(compound_equality, "target_chembl_id"))
+        .rank("dense")
+        .cast(pl.Int64)
+    )
+    if not keep_stereo:
+        out = out.with_columns(
+            might_be_racemic=pl.col(f"{value}_counts").sum().over(_KEY) > 1
+        )
+    return out.drop(_KEY)
 
 
 def cache_path(version: str, params: dict, cache_dir: Path | str | None = None) -> Path:

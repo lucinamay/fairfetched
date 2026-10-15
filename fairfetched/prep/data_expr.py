@@ -132,7 +132,7 @@ def pchembl(value: str = "standard_value", units: str = "standard_units") -> pl.
 
 
 def fragments_without_salts(smiles: str | pl.Expr = "standard_smiles") -> pl.Expr:
-    """Distinct "."-separated fragments of `smiles` (pl.List(pl.String)); when
+    """Distinct "."-separated fragments of `smiles` (pl.List(pl.String), sorted); when
     there are several, those matching `MIXTURE_REGEX` and empty ones are removed,
     so a salt-only `smiles` gives []. As CAPRICHO `clean_mixtures`, which then
     calls every result other than one fragment a mixture ("." for []).
@@ -140,7 +140,7 @@ def fragments_without_salts(smiles: str | pl.Expr = "standard_smiles") -> pl.Exp
     Expects RDKit-canonical SMILES, as `MIXTURE_REGEX` matches text.
     """
     expr = pl.col(smiles) if isinstance(smiles, str) else smiles
-    frags = expr.str.split(".").list.unique()
+    frags = expr.str.split(".").list.unique().list.sort()  # np.unique sorts
     salt = pl.element().str.contains(MIXTURE_REGEX) | (pl.element() == "")
     return (
         pl.when(frags.list.len() > 1)

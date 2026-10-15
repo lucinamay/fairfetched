@@ -1,7 +1,9 @@
 """Regenerate CAPRICHO's references for `tests/test_capricho.py` with a given
 CAPRICHO version, into `capricho/<name>/<recipe>_data_*`; a recipe is skipped when
 its `_recipe.json` (written last) exists. Keeps the rows CAPRICHO outputs
-(`_not_aggregated`) and those it removes (`_removed_subset`), as parquet.
+(`_not_aggregated`) and those it removes (`_removed_subset`), as parquet, and
+CAPRICHO's `aggregate_data` on the former (`_aggregated`), run in-process with
+the installed CAPRICHO, which must be the given version.
 
 ADORA3 runs the command of CAPRICHO's `tests/resources/ADORA3_data_recipe.json`;
 CHEMBL281 the options ADORA3 leaves off (mixtures, undefined stereo, assay
@@ -19,9 +21,11 @@ linked into `pystow_home`, so nothing is downloaded, but CAPRICHO extracts the
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 import polars as pl
@@ -106,8 +110,38 @@ def read_capricho(work: Path, name: str) -> tuple[pl.DataFrame, pl.DataFrame]:
     return kept, removed
 
 
+def aggregate_reference(out: Path, recipe: str) -> None:
+    """`aggregate_data` with the recipe's options on `<recipe>_data_not_aggregated`,
+    which is CAPRICHO's `pre_agg_df` (`capricho get`); pipe-joined values stay
+    strings."""
+    from Capricho.cli.chembl_data_pipeline import aggregate_data
+
+    options = json.loads((out / f"{recipe}_data_recipe.json").read_text())
+    if options["capricho version"] != package_version("capricho"):
+        raise RuntimeError(f"installed CAPRICHO is not {options['capricho version']}")
+    pre_agg = pl.read_parquet(out / f"{recipe}_data_not_aggregated.parquet")
+    df = aggregate_data(
+        pre_agg.to_pandas(),
+        chirality=options["chirality"],
+        extra_multival_cols=options["metadata_columns"],
+        extra_id_cols=options["id_columns"],
+        aggregate_mutants=options["aggregate_mutants"],
+        compound_equality=options["compound_equality"],
+        value_col=options["value_column"],
+    )
+    strings = {c: "string" for c in df.select_dtypes("object").columns}
+    pl.from_pandas(df.astype(strings)).write_parquet(
+        out / f"{recipe}_data_aggregated.parquet"
+    )
+
+
 def generate(spec: str, pystow_home: Path) -> Path:
     out = OUT / _name(spec)
+    for recipe in RECIPES:
+        if (out / f"{recipe}_data_recipe.json").exists() and not (
+            out / f"{recipe}_data_aggregated.parquet"
+        ).exists():
+            aggregate_reference(out, recipe)
     todo = [r for r in RECIPES if not (out / f"{r}_data_recipe.json").exists()]
     out.mkdir(parents=True, exist_ok=True)
     for recipe in todo:
@@ -116,6 +150,7 @@ def generate(spec: str, pystow_home: Path) -> Path:
         kept.write_parquet(out / f"{recipe}_data_not_aggregated.parquet")
         removed.write_parquet(out / f"{recipe}_data_removed_subset.parquet")
         shutil.copy(work / f"{recipe}_data_recipe.json", out)
+        aggregate_reference(out, recipe)
     return out
 
 

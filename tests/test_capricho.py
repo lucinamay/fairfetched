@@ -3,6 +3,7 @@ hand-built frames. Expected values come from plain Python over the rows; the
 flag logic itself is tested in `test_data_expr.py`."""
 
 import logging
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -394,6 +395,84 @@ class TestMolFlags:
             _capricho.flag(_bioactivity([{}]), **kw)
 
 
+def _aggregated(rows: list[dict], **kw) -> pl.DataFrame:
+    """`aggregate` on rows of `standard_smiles` etc., other columns null."""
+    default = {
+        "standard_smiles": "CCO",
+        "pchembl_value": 6.0,
+        "standard_relation": "=",
+        "mutation": None,
+        "target_chembl_id": "T1",
+        "drop_x": False,
+    }
+    columns = dict.fromkeys(_capricho.MULTIVAL)
+    lf = pl.LazyFrame(
+        [columns | default | {"activity_id": i} | r for i, r in enumerate(rows)],
+        infer_schema_length=None,
+    )
+    return _capricho.aggregate(lf, **kw).collect()
+
+
+class TestAggregate:
+    def test_geometric_stats(self):
+        """scipy `gmean([6, 8]) = sqrt(48)`; `gstd` = exp of the ddof=1 std of
+        the logs, for two values |ln 8 - ln 6| / sqrt(2)."""
+        out = _aggregated([{"pchembl_value": 6.0}, {"pchembl_value": 8.0}])
+        row = out.row(0, named=True)
+        assert row["pchembl_value_mean"] == pytest.approx(math.sqrt(48))
+        assert row["pchembl_value_std"] == pytest.approx(
+            math.exp(math.log(8 / 6) / math.sqrt(2))
+        )
+        assert row["pchembl_value_median"] == 7.0
+        assert row["pchembl_value_counts"] == 2
+        assert row["activity_id"] == [0, 1]
+        assert row["drop_x"] == [False, False]
+
+    def test_singleton_std_is_null(self):
+        assert _aggregated([{}])["pchembl_value_std"].to_list() == [None]
+
+    def test_censored_join_only_equal_values(self):
+        out = _aggregated(
+            [
+                {"standard_relation": "<", "pchembl_value": 5.0},
+                {"standard_relation": "<", "pchembl_value": 5.0},
+                {"standard_relation": "<", "pchembl_value": 4.0},
+            ]
+        )
+        assert out["pchembl_value_counts"].to_list() == [2, 1]
+        assert out["pchembl_value_mean"].to_list() == [5.0, 4.0]
+        assert out["pchembl_value_std"].to_list() == [None, None]
+
+    def test_null_relation_is_equal(self):
+        out = _aggregated([{"standard_relation": None}, {}])
+        assert out["standard_relation"].to_list() == ["="]
+
+    def test_mutants_kept_apart_and_share_identifier_group(self):
+        out = _aggregated([{}, {"mutation": "A1B"}])
+        assert out["mutation"].to_list() == ["WT", "A1B"]
+        assert out["shared_identifier_group"].to_list() == [1, 1]
+
+    def test_aggregate_mutants(self):
+        out = _aggregated([{}, {"mutation": "A1B"}], aggregate_mutants=True)
+        assert out["mutation"].to_list() == [["WT", "A1B"]]
+        assert out["shared_identifier_group"].to_list() == [None]
+
+    ENANTIOMERS = (
+        {"standard_smiles": "C[C@H](N)O"},
+        {"standard_smiles": "C[C@@H](N)O"},
+    )
+
+    def test_enantiomers_apart_with_chirality(self):
+        out = _aggregated(list(self.ENANTIOMERS))
+        assert out["smiles"].to_list() == ["C[C@H](N)O", "C[C@@H](N)O"]
+        assert "might_be_racemic" not in out.columns
+
+    def test_enantiomers_joined_without_chirality(self):
+        out = _aggregated(list(self.ENANTIOMERS), chirality=False)
+        assert out["smiles"].to_list() == ["CC(N)O"]
+        assert out["might_be_racemic"].to_list() == [True]
+
+
 class TestCache:
     def test_written_once_per_params(self, chembl, tmp_path):
         first = chembl.view.capricho(cache_dir=tmp_path)
@@ -772,3 +851,84 @@ class TestChembl232AgainstCapricho:
         ours, theirs = chembl232["pchembl_value"], chembl232["pchembl_theirs"]
         assert (ours.is_null() == theirs.is_null()).all()
         assert ((ours - theirs).abs().max() or 0) < 1e-6
+
+
+def _activity_ids(ids: pl.Expr) -> pl.Expr:
+    """Sorted, "|"-joined `activity_id`s: a group's join key."""
+    return ids.list.sort().list.eval(pl.element().cast(pl.String)).list.join("|")
+
+
+def _aggregated_pair(ours: pl.DataFrame, name: str, chirality: bool) -> pl.DataFrame:
+    """`aggregate` on the rows CAPRICHO aggregates (`_not_aggregated`), in its
+    order (a group's `smiles` is its first row), joined to CAPRICHO's
+    `aggregate_data` on the same rows (`_theirs` suffix)."""
+    kept = pl.read_parquet(REFERENCE / f"{name}_data_not_aggregated.parquet")
+    ours = kept.select("activity_id").join(
+        ours, on="activity_id", how="left", maintain_order="left"
+    )
+    agg = _capricho.aggregate(ours.lazy(), chirality=chirality).collect()
+    theirs = pl.read_parquet(REFERENCE / f"{name}_data_aggregated.parquet")
+    ids = pl.col("activity_id").str.split("|").cast(pl.List(pl.Int64))
+    return agg.with_columns(ids=_activity_ids(pl.col("activity_id"))).join(
+        theirs.with_columns(ids=_activity_ids(ids)),
+        on="ids",
+        how="full",
+        suffix="_theirs",
+    )
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        ("CHEMBL281", CHEMBL281_RECIPE),
+        ("CHEMBL281_nondefault", CHEMBL281_NONDEFAULT_RECIPE),
+    ],
+    ids=lambda p: p[0],
+)
+def aggregated(request) -> pl.DataFrame:
+    name, recipe = request.param
+    chirality = recipe.get("chirality", True)
+    return _aggregated_pair(_ours("CHEMBL281", recipe), name, chirality)
+
+
+class TestAggregateAgainstCapricho:
+    """`aggregate` against CAPRICHO 1.0.4 `aggregate_data` on CAPRICHO's own
+    pre-aggregation rows (`generate_capricho.aggregate_reference`). Groups are
+    matched by their `activity_id`s. Skipped unless ChEMBL 36 is downloaded.
+    """
+
+    def test_same_groups(self, aggregated):
+        assert aggregated["ids"].null_count() == 0
+        assert aggregated["ids_theirs"].null_count() == 0
+
+    @pytest.mark.parametrize(
+        "column",
+        [
+            "smiles",
+            "connectivity",
+            "inchikey",
+            "shared_identifier_group",
+            "standard_relation",
+            "mutation",
+            "pchembl_value_counts",
+        ],
+    )
+    def test_column(self, aggregated, column):
+        assert aggregated[column].equals(aggregated[f"{column}_theirs"])
+
+    def test_might_be_racemic(self, aggregated):
+        if "might_be_racemic_theirs" not in aggregated.columns:
+            assert "might_be_racemic" not in aggregated.columns
+        else:
+            assert aggregated["might_be_racemic"].equals(
+                aggregated["might_be_racemic_theirs"]
+            )
+
+    @pytest.mark.parametrize("stat", ["mean", "median", "std"])
+    def test_stat(self, aggregated, stat):
+        """CAPRICHO rounds values to 2 decimals first (here at most 0.005 off); its NaN
+        (log of a negative calculated pChEMBL) is stored as null."""
+        ours = aggregated[f"pchembl_value_{stat}"].fill_nan(None)
+        theirs = aggregated[f"pchembl_value_{stat}_theirs"]
+        assert (ours.is_null() == theirs.is_null()).all()
+        assert ((ours - theirs).abs().max() or 0) <= 0.005
