@@ -1,6 +1,6 @@
 [project]
 name = "fairfetched"
-version = "0.1.0a20260906"
+version = "0.1.0a20261015"
 description = "data APIs for reproducible data fetching in cheminformatics"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -55,6 +55,7 @@ package-data = {"fairfetched.get" = ["manifests/*.json", "_demo/*/*.parquet"]}
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["fairfetched*"] # without this, namespace discovery also ships tests/, dev/ and scripts/
 
 [tool.uv.workspace]
 members = [
