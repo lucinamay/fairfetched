@@ -1,4 +1,4 @@
-"""Compare `fairfetched.get._capricho.flag` with CAPRICHO 1.0.4 on random ChEMBL 36
+"""Compare `fairfetched.prep.capricho.flag` with CAPRICHO 1.0.4 on random ChEMBL 36
 targets: activity sets, removed subset, pChEMBL and every flag. Both outputs are
 cached in `out_dir`; delete `pystow_home` (~30 GB) afterwards.
 
@@ -11,7 +11,8 @@ from pathlib import Path
 
 import polars as pl
 
-from fairfetched.get import Chembl, _capricho
+from fairfetched.get import Chembl
+from fairfetched.prep import capricho
 from tests.reference.generate_capricho import read_capricho, run_capricho
 from tests.test_capricho import CAPRICHO_COMMENTS
 
@@ -67,7 +68,7 @@ def ours(chembl: Chembl, targets: list[str], path: Path) -> pl.DataFrame:
         bioactivity = chembl.view.bioactivity.filter(
             pl.col("target_chembl_id").is_in(targets)
         )
-        lf = _capricho.flag(bioactivity, chembl.lfs, **RECIPE)
+        lf = capricho.flag(bioactivity, chembl.lfs["activities"], **RECIPE)
         lf.remove(pl.any_horizontal(SELECTED)).sink_parquet(path)
     return pl.read_parquet(path)
 

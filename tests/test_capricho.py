@@ -1,4 +1,4 @@
-"""The ChEMBL preset (`fairfetched.get._capricho`) on `Chembl.demo()` and on small
+"""The ChEMBL preset (`fairfetched.prep.capricho`) on `Chembl.demo()` and on small
 hand-built frames. Expected values come from plain Python over the rows; the
 flag logic itself is tested in `test_data_expr.py`."""
 
@@ -12,8 +12,9 @@ import polars as pl
 import polars.selectors as cs
 import pytest
 
-from fairfetched.get import Chembl, _capricho
+from fairfetched.get import Chembl
 from fairfetched.get.chembl import CHEMBL_DIR
+from fairfetched.prep import capricho
 
 SELECTION = {
     "drop_confidence": ("confidence_score", (7, 8, 9)),
@@ -68,13 +69,13 @@ def _bioactivity(rows: list[dict]) -> pl.LazyFrame:
 
 class TestSelectionFlags:
     def test_defaults_match_reference(self, bioactivity):
-        out = _capricho.flag(bioactivity).collect()
+        out = capricho.flag(bioactivity).collect()
         for name, (col, allowed) in SELECTION.items():
             expected = [v not in allowed for v in out[col].to_list()]
             assert out[name].to_list() == expected, name
 
     def test_release_keeps_null_and_older(self, bioactivity):
-        out = _capricho.flag(bioactivity, chembl_release=20).collect()
+        out = capricho.flag(bioactivity, chembl_release=20).collect()
         expected = [
             r is not None and r > 20 for r in out["chembl_release_id"].to_list()
         ]
@@ -89,17 +90,17 @@ class TestSelectionFlags:
             {"assay_id": 2, "doc_id": 2, "pchembl_value": None, "standard_value": None},
             {"assay_id": 3, "doc_id": 3, "molregno": 2},
         ]
-        out = _capricho.flag(_bioactivity(rows), min_assay_overlap=1).collect()
+        out = capricho.flag(_bioactivity(rows), min_assay_overlap=1).collect()
         assert out["drop_missing_standard_value"].to_list() == [False, True, False]
         assert out["drop_low_assay_overlap"].to_list() == [True, False, True]
 
     def test_null_release_is_kept(self):
         rows = [{"chembl_release_id": r} for r in (None, 10, 30)]
-        out = _capricho.flag(_bioactivity(rows), chembl_release=20).collect()
+        out = capricho.flag(_bioactivity(rows), chembl_release=20).collect()
         assert out["drop_release"].to_list() == [False, False, True]
 
     def test_none_disables_a_criterion(self, bioactivity):
-        out = _capricho.flag(bioactivity, confidence_scores=None).collect()
+        out = capricho.flag(bioactivity, confidence_scores=None).collect()
         assert "drop_confidence" not in out.columns
         assert "drop_release" not in out.columns
 
@@ -110,8 +111,8 @@ class TestSelectionFlags:
             {"standard_type": "Ki", "assay_id": 1, "pchembl_value": 9.0},
             {"standard_type": "Log Ki", "assay_id": 2, "pchembl_value": 6.0},
         ]
-        plain = _capricho.flag(_bioactivity(rows), standard_types=["Ki"]).collect()
-        calc = _capricho.flag(
+        plain = capricho.flag(_bioactivity(rows), standard_types=["Ki"]).collect()
+        calc = capricho.flag(
             _bioactivity(rows), standard_types=["Ki"], calculate_pchembl=True
         ).collect()
         for out in (plain, calc):
@@ -124,7 +125,7 @@ class TestSelectionFlags:
             {"standard_type": "Ki", "doc_id": 1},
             {"standard_type": "Log Ki", "doc_id": 2, "assay_id": 2},
         ]
-        out = _capricho.flag(
+        out = capricho.flag(
             _bioactivity(rows), standard_types=["Ki"], calculate_pchembl=True
         ).collect()
         assert out["note_cross_document"].to_list() == [False, False]
@@ -134,9 +135,9 @@ class TestSelectionFlags:
             {"molregno": 1, "assay_id": 1, "pchembl_value": 9.0},
             {"molregno": 1, "assay_id": 2, "pchembl_value": 6.0},
         ]
-        fetched = _capricho.flag(_bioactivity(rows)).collect()
+        fetched = capricho.flag(_bioactivity(rows)).collect()
         rows[1]["confidence_score"] = 5
-        unfetched = _capricho.flag(_bioactivity(rows)).collect()
+        unfetched = capricho.flag(_bioactivity(rows)).collect()
         assert fetched["drop_unit_annotation_error"].to_list() == [True, True]
         assert unfetched["drop_unit_annotation_error"].to_list() == [False, False]
 
@@ -151,14 +152,14 @@ class TestCalculatePchembl:
             {"pchembl_value": None, "standard_value": 10.0, "standard_units": None},
             {"pchembl_value": None, "standard_value": 10.0, "standard_units": "%"},
         ]
-        out = _capricho.flag(_bioactivity(rows), calculate_pchembl=True).collect()
+        out = capricho.flag(_bioactivity(rows), calculate_pchembl=True).collect()
         assert out["pchembl_value"].to_list() == pytest.approx([6.64, 7.0, None, None])
         assert out["note_pchembl_calculated"].to_list() == [False, True, True, False]
         assert out["drop_incompatible_units"].to_list() == [False, False, False, True]
         assert out["drop_missing_value"].to_list() == [False, False, True, True]
 
     def test_off_by_default(self):
-        out = _capricho.flag(_bioactivity([{"pchembl_value": None}])).collect()
+        out = capricho.flag(_bioactivity([{"pchembl_value": None}])).collect()
         assert "note_pchembl_calculated" not in out.columns
         assert "drop_incompatible_units" not in out.columns
         assert out["pchembl_value"].to_list() == [None]
@@ -169,7 +170,7 @@ class TestConvertUnits:
         """pChEMBL is calculated from the original 1 uM; CAPRICHO would then
         multiply it by 1000 (`flag` docstring)."""
         rows = [{"pchembl_value": None, "standard_value": 1.0, "standard_units": "uM"}]
-        out = _capricho.flag(
+        out = capricho.flag(
             _bioactivity(rows), calculate_pchembl=True, convert_units=True
         ).collect()
         assert out["pchembl_value"].to_list() == [6.0]
@@ -180,13 +181,13 @@ class TestConvertUnits:
         ]
 
     def test_off_by_default(self):
-        out = _capricho.flag(_bioactivity([{}])).collect_schema().names()
+        out = capricho.flag(_bioactivity([{}])).collect_schema().names()
         assert "note_unit_converted" not in out
         assert "drop_unit_type_mismatch" in out
 
     def test_type_mismatch_not_converted(self):
         rows = [{"standard_value": 12.0, "standard_units": "mM", "standard_type": "IZ"}]
-        out = _capricho.flag(_bioactivity(rows), convert_units=True).collect()
+        out = capricho.flag(_bioactivity(rows), convert_units=True).collect()
         assert out["drop_unit_type_mismatch"].to_list() == [True]
         assert out["standard_value"].to_list() == [12.0]
         assert out["note_unit_converted"].to_list() == [None]
@@ -202,7 +203,7 @@ class TestCrossDocument:
             {"doc_id": 1, "molregno": 2, "organism_tgt": None},
             {"doc_id": 2, "molregno": 2, "assay_id": 2, "organism_tgt": None},
         ]
-        out = _capricho.flag(_bioactivity(rows)).collect()
+        out = capricho.flag(_bioactivity(rows)).collect()
         assert out["note_cross_document"].to_list() == [True, True, False, False]
 
 
@@ -210,14 +211,14 @@ class TestRequireDocDate:
     def test_missing_year_flagged_either_way(self):
         rows = [{"year": None}, {"year": 2000}]
         for require in (False, True):
-            out = _capricho.flag(_bioactivity(rows), require_doc_date=require)
+            out = capricho.flag(_bioactivity(rows), require_doc_date=require)
             assert out.collect()["drop_missing_year"].to_list() == [True, False]
 
     def test_missing_year_counts_for_cross_document_only_by_default(self):
         """The same value in two documents, one without a year."""
         rows = [{"doc_id": 1, "year": None}, {"doc_id": 2, "assay_id": 2}]
-        default = _capricho.flag(_bioactivity(rows)).collect()
-        strict = _capricho.flag(_bioactivity(rows), require_doc_date=True).collect()
+        default = capricho.flag(_bioactivity(rows)).collect()
+        strict = capricho.flag(_bioactivity(rows), require_doc_date=True).collect()
         assert default["note_cross_document"].to_list() == [True, True]
         assert strict["note_cross_document"].to_list() == [False, False]
 
@@ -229,8 +230,8 @@ class TestRequireDocDate:
             {"assay_id": 2, "doc_id": 2, "pchembl_value": 7.0, "year": None},
             {"assay_id": 3, "doc_id": 3, "molregno": 2},
         ]
-        default = _capricho.flag(_bioactivity(rows), min_assay_overlap=1).collect()
-        strict = _capricho.flag(
+        default = capricho.flag(_bioactivity(rows), min_assay_overlap=1).collect()
+        strict = capricho.flag(
             _bioactivity(rows), min_assay_overlap=1, require_doc_date=True
         )
         assert default["drop_low_assay_overlap"].to_list() == [False, False, True]
@@ -243,7 +244,7 @@ class TestRequireDocDate:
 
 class TestCurateAnnotationErrors:
     def test_off_leaves_out_the_flag(self):
-        lf = _capricho.flag(_bioactivity([{}]), curate_annotation_errors=False)
+        lf = capricho.flag(_bioactivity([{}]), curate_annotation_errors=False)
         assert "drop_unit_annotation_error" not in lf.collect_schema()
 
 
@@ -253,7 +254,9 @@ class TestAssaySize:
         mols = defaultdict(set)
         for r in chembl.lfs["activities"].collect().rows(named=True):
             mols[r["assay_id"]].add(r["molregno"])
-        out = _capricho.flag(subset, chembl.lfs, min_assay_size=2).collect()
+        out = capricho.flag(
+            subset, chembl.lfs["activities"], min_assay_size=2
+        ).collect()
         assert out["assay_size"].to_list() == [
             len(mols[a]) for a in out["assay_id"].to_list()
         ]
@@ -265,9 +268,7 @@ class TestAssaySize:
         """The frame holds 1 of the 3 molecules assay 1 measured."""
         activities = pl.LazyFrame({"assay_id": [1, 1, 1], "molregno": [1, 2, 3]})
         frame = _bioactivity([{"assay_id": 1, "molregno": 1}])
-        out = _capricho.flag(
-            frame, {"activities": activities}, min_assay_size=2
-        ).collect()
+        out = capricho.flag(frame, activities, min_assay_size=2).collect()
         assert out["assay_size"].to_list() == [3]
         assert out["drop_assay_size"].to_list() == [False]
 
@@ -276,14 +277,14 @@ class TestAssaySize:
             {"assay_id": 2, "molregno": 3}
         ]
         with caplog.at_level(logging.WARNING):
-            out = _capricho.flag(_bioactivity(rows), max_assay_size=1).collect()
+            out = capricho.flag(_bioactivity(rows), max_assay_size=1).collect()
         assert "given rows only" in caplog.text
         assert out["assay_size"].to_list() == [2, 2, 2, 1]
         assert out["drop_assay_size"].to_list() == [True, True, True, False]
 
-    def test_database_without_tables_raises(self):
-        with pytest.raises(ValueError, match="needs `lfs`"):
-            _capricho.flag(
+    def test_database_without_activities_raises(self):
+        with pytest.raises(ValueError, match="needs `activities`"):
+            capricho.flag(
                 _bioactivity([{}]), min_assay_size=1, assay_size_source="database"
             )
 
@@ -300,7 +301,7 @@ class TestOverlapSkipsSizeFlaggedAssays:
             {"assay_id": 3, "molregno": 3, "doc_id": 3, "pchembl_value": 5.0},
             {"assay_id": 3, "molregno": 4, "doc_id": 3, "pchembl_value": 5.5},
         ]
-        out = _capricho.flag(
+        out = capricho.flag(
             _bioactivity(rows),
             min_assay_size=2,
             assay_size_source="frame",
@@ -346,7 +347,7 @@ class TestMolFlags:
         return mixture, undefined
 
     def test_demo(self, bioactivity):
-        out = _capricho.flag(bioactivity, mol_flags=True, drop_unassigned_chiral=True)
+        out = capricho.flag(bioactivity, mol_flags=True, drop_unassigned_chiral=True)
         self._check(out.collect())
 
     def test_salt_mixture_and_racemate(self):
@@ -366,14 +367,14 @@ class TestMolFlags:
             "[Cu+2].CC(=O)[O-].CC(=O)[O-]",
         ]
         rows = [{"canonical_smiles": s} for s in smiles]
-        serial = _capricho.flag(
+        serial = capricho.flag(
             _bioactivity(rows), mol_flags=True, drop_unassigned_chiral=True
         ).collect()
         assert self._check(serial) == (
             [False, True, False, False, True, True],
             [False, False, True, False, False, False],
         )
-        parallel = _capricho.flag(
+        parallel = capricho.flag(
             _bioactivity(rows),
             mol_flags=True,
             drop_unassigned_chiral=True,
@@ -382,13 +383,13 @@ class TestMolFlags:
         assert parallel.collect().equals(serial)
 
     def test_undefined_stereo_needs_drop_unassigned_chiral(self):
-        out = _capricho.flag(_bioactivity([{}]), mol_flags=True).collect()
+        out = capricho.flag(_bioactivity([{}]), mol_flags=True).collect()
         assert "drop_undefined_stereo" not in out.columns
 
     def test_standardization_failure(self):
         """An unclosed ring does not parse; a missing structure is not a failure."""
         rows = [{"canonical_smiles": s} for s in ("C1CC", "CCO", None)]
-        out = _capricho.flag(_bioactivity(rows), mol_flags=True).collect()
+        out = capricho.flag(_bioactivity(rows), mol_flags=True).collect()
         assert out["drop_standardization_failed"].to_list() == [True, False, False]
         assert out["drop_mixture"].to_list() == [False, False, False]
 
@@ -398,15 +399,15 @@ class TestMolFlags:
             {"doc_id": 1, "canonical_smiles": "C1CC"},
             {"doc_id": 2, "assay_id": 2, "canonical_smiles": "C1CC"},
         ]
-        plain = _capricho.flag(_bioactivity(rows)).collect()
-        mol = _capricho.flag(_bioactivity(rows), mol_flags=True).collect()
+        plain = capricho.flag(_bioactivity(rows)).collect()
+        mol = capricho.flag(_bioactivity(rows), mol_flags=True).collect()
         assert plain["note_cross_document"].to_list() == [True, True]
         assert mol["note_cross_document"].to_list() == [False, False]
 
     def test_without_chirality(self):
         """Removing stereo leaves the center of (R)-1-aminoethanol undefined."""
         rows = [{"canonical_smiles": s} for s in ("C[C@@H](N)O", "CC(N)O", "CCO")]
-        out = _capricho.flag(
+        out = capricho.flag(
             _bioactivity(rows),
             mol_flags=True,
             chirality=False,
@@ -420,7 +421,7 @@ class TestMolFlags:
     )
     def test_stereo_options_need_mol_flags(self, kw):
         with pytest.raises(ValueError, match="mol_flags"):
-            _capricho.flag(_bioactivity([{}]), **kw)
+            capricho.flag(_bioactivity([{}]), **kw)
 
 
 def _aggregated(rows: list[dict], **kw) -> pl.DataFrame:
@@ -433,12 +434,12 @@ def _aggregated(rows: list[dict], **kw) -> pl.DataFrame:
         "target_chembl_id": "T1",
         "drop_x": False,
     }
-    columns = dict.fromkeys(_capricho.MULTIVAL)
+    columns = dict.fromkeys(capricho.MULTIVAL)
     lf = pl.LazyFrame(
         [columns | default | {"activity_id": i} | r for i, r in enumerate(rows)],
         infer_schema_length=None,
     )
-    return _capricho.aggregate(lf, **kw).collect()
+    return capricho.aggregate(lf, **kw).collect()
 
 
 class TestAggregate:
@@ -515,12 +516,14 @@ class TestCache:
 
     def test_cache_holds_flagged_bioactivity(self, chembl, tmp_path):
         cached = chembl.view.capricho(cache_dir=tmp_path).collect()
-        direct = _capricho.flag(chembl.view.bioactivity, chembl.lfs).collect()
+        direct = capricho.flag(
+            chembl.view.bioactivity, chembl.lfs["activities"]
+        ).collect()
         assert cached.equals(direct)
 
     def test_duckdb_engine_not_implemented(self, bioactivity):
         with pytest.raises(NotImplementedError, match="duckdb"):
-            _capricho.flag(bioactivity, engine="duckdb")
+            capricho.flag(bioactivity, engine="duckdb")
 
 
 REFERENCE = Path(__file__).parent / "reference/capricho/1.0.4"
@@ -561,7 +564,7 @@ def _ours(target: str, recipe: dict) -> pl.DataFrame:
         pytest.skip("ChEMBL 36 not downloaded")
     chembl = Chembl.from_version("36")
     bioactivity = chembl.view.bioactivity.filter(target_chembl_id=target)
-    lf = _capricho.flag(bioactivity, chembl.lfs, **recipe)
+    lf = capricho.flag(bioactivity, chembl.lfs["activities"], **recipe)
     fetched = cs.by_name(*FETCHED, require_all=False)
     return lf.remove(pl.any_horizontal(fetched)).collect()
 
@@ -894,7 +897,7 @@ def _aggregated_pair(ours: pl.DataFrame, name: str, chirality: bool) -> pl.DataF
     ours = kept.select("activity_id").join(
         ours, on="activity_id", how="left", maintain_order="left"
     )
-    agg = _capricho.aggregate(ours.lazy(), chirality=chirality).collect()
+    agg = capricho.aggregate(ours.lazy(), chirality=chirality).collect()
     theirs = pl.read_parquet(REFERENCE / f"{name}_data_aggregated.parquet")
     ids = pl.col("activity_id").str.split("|").cast(pl.List(pl.Int64))
     return agg.with_columns(ids=_activity_ids(pl.col("activity_id"))).join(

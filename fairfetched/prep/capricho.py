@@ -70,29 +70,29 @@ def _selection(
 
 def _with_assay_size(
     lf: pl.LazyFrame,
-    lfs: dict[str, pl.LazyFrame] | None,
+    activities: pl.LazyFrame | None,
     source: AssaySizes,
     lo: int | None,
     hi: int | None,
 ) -> pl.LazyFrame:
     """Add `assay_size` and `drop_assay_size` (outside [`lo`, `hi`], None = open).
 
-    "database" counts over all of `lfs["activities"]` (CAPRICHO); "frame" over
-    the rows of `lf`; "auto" takes "database" when `lfs` is given, else "frame"
+    "database" counts over all of `activities` (CAPRICHO); "frame" over
+    the rows of `lf`; "auto" takes "database" when `activities` is given, else "frame"
     with a warning.
     """
     if source == "auto":
-        source = "database" if lfs is not None else "frame"
+        source = "database" if activities is not None else "frame"
         if source == "frame":
             _lg.warning(
                 "assay_size counted over the given rows only, not the whole assay; "
-                "pass `lfs` for CAPRICHO's database-wide count"
+                "pass `activities` for CAPRICHO's database-wide count"
             )
     if source == "database":
-        if lfs is None:
-            raise ValueError("assay_size_source='database' needs `lfs`")
+        if activities is None:
+            raise ValueError("assay_size_source='database' needs `activities`")
         lf = lf.join(
-            assay_sizes(lfs["activities"]),
+            assay_sizes(activities),
             on="assay_id",
             how="left",
             maintain_order="left",
@@ -159,7 +159,7 @@ def _with_mol_flags(
 
 def flag(
     bioactivity: pl.LazyFrame,
-    lfs: dict[str, pl.LazyFrame] | None = None,
+    activities: pl.LazyFrame | None = None,
     *,
     confidence_scores: Sequence[int] | None = (7, 8, 9),
     assay_types: Sequence[str] | None = ("B", "F"),
@@ -189,8 +189,13 @@ def flag(
     criteria CAPRICHO applies as SQL WHERE (confidence, assay type, relation,
     units, standard type, release) become `drop_*` flags, so excluded rows stay
     inspectable; rows they flag take no part in the self-join flags, as
-    CAPRICHO never fetches them. `lfs` (the raw tables) gives database-wide
-    assay sizes. `calculate_pchembl` fills a null `pchembl_value` from
+    CAPRICHO never fetches them. `activities` (unfiltered, e.g.
+    `chembl.lfs["activities"]`) gives database-wide assay sizes, as CAPRICHO's
+    separate count; the other self-join flags (cross-document duplicates, unit
+    annotation errors, assay overlap) compare only the rows of `bioactivity`, as
+    CAPRICHO compares only the rows it fetches by target, molecule, document or
+    assay ID. A `bioactivity` filtered on other columns can therefore flag
+    differently than its whole targets. `calculate_pchembl` fills a null `pchembl_value` from
     `standard_value` (`de.pchembl`); as CAPRICHO, `note_pchembl_calculated` marks
     every attempt (also those giving null) and `drop_incompatible_units` the null
     values in other units. `require_doc_date` makes rows without a year
@@ -279,7 +284,7 @@ def flag(
         )
     if min_assay_size is not None or max_assay_size is not None:
         lf = _with_assay_size(
-            lf, lfs, assay_size_source, min_assay_size, max_assay_size
+            lf, activities, assay_size_source, min_assay_size, max_assay_size
         )
         unfetched = unfetched | pl.col("drop_assay_size")
     if min_assay_overlap > 0:
@@ -466,7 +471,7 @@ def cache_path(version: str, params: dict, cache_dir: Path | str | None = None) 
 
 def ensure_flagged(
     bioactivity: pl.LazyFrame,
-    lfs: dict[str, pl.LazyFrame],
+    activities: pl.LazyFrame,
     version: str,
     cache_dir: Path | str | None = None,
     **params,
@@ -478,6 +483,6 @@ def ensure_flagged(
     path = cache_path(version, params, cache_dir)
     if not path.exists():
         tmp = path.with_suffix(".tmp")
-        flag(bioactivity, lfs, **params).sink_parquet(tmp, mkdir=True)
+        flag(bioactivity, activities, **params).sink_parquet(tmp, mkdir=True)
         tmp.replace(path)
     return path

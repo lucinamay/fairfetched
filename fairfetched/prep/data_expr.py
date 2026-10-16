@@ -323,7 +323,7 @@ def assay_size(assay: str = "assay_id", mol: str = "molregno") -> pl.Expr:
     """unique non-null `mol` per `assay`, over the frame's rows (pl.UInt32).
 
     c.f. CAPRICHO counts over whole assay in ChEMBL.
-    the Chembl preset uses `fairfetched.get._capricho.assay_sizes` for that.
+    the Chembl preset uses `fairfetched.prep.capricho.assay_sizes` for that.
     """
     return pl.col(mol).drop_nulls().n_unique().over(assay)
 
