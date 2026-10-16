@@ -25,8 +25,13 @@ INACTIVE_COMMENTS = (  # CAPRICHO REVIEW_ACTIVITY_COMMENTS
     "not tested",
     "not determined",
 )
-MOLAR_UNITS = ("nM", "uM", "µM", "mM")
-MOLAR_EXPONENT = {"nM": -9, "uM": -6, "µM": -6, "mM": -3}  # CAPRICHO convert_to_log10 units
+MOLAR_EXPONENT = {
+    "nM": -9,
+    "uM": -6,
+    "µM": -6,
+    "mM": -3,
+}  # CAPRICHO convert_to_log10 units
+MOLAR_UNITS = tuple(MOLAR_EXPONENT)
 # CAPRICHO 1.0.4 `chembl/unit_conversions.py`, verbatim: target label ->
 # {lowercased, stripped unit: factor}; no key is in two tables or a target label
 UNIT_CONVERSIONS = {
@@ -254,11 +259,8 @@ def has_unit_type_mismatch(
         _TARGETS, default=None
     )
     return pl.any_horizontal(
-        pl.lit(False),
-        *(
-            (target == t) & pl.col(type_).str.contains(pattern)
-            for t, pattern in UNIT_TYPE_MISMATCH.items()
-        ),
+        (target == t) & pl.col(type_).str.contains(pattern)
+        for t, pattern in UNIT_TYPE_MISMATCH.items()
     ).fill_null(False)
 
 

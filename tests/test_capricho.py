@@ -5,7 +5,6 @@ flag logic itself is tested in `test_data_expr.py`."""
 import logging
 import math
 from collections import defaultdict
-from collections.abc import Sequence
 from pathlib import Path
 
 import polars as pl
@@ -565,10 +564,6 @@ CAPRICHO_COMMENTS = {
     "note_salt_removed": "Salt/solvent removed",
     "note_stereo_removed": "Stereochemistry removed",
 }
-FLOAT32_UNIT_ERRORS = (
-    "CAPRICHO casts pchembl_value and standard_value to float32, so ~1e-7 noise "
-    "hides exact multiples of 3 at tol=1e-9"
-)
 
 
 def _ours(target: str, recipe: dict) -> pl.DataFrame:
@@ -610,291 +605,199 @@ def _joined(ours: pl.DataFrame, theirs: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _flag_params(flags: Sequence[str], divergences: dict[str, str]) -> list:
-    return [
-        pytest.param(
-            f,
-            marks=pytest.mark.xfail(strict=True, reason=divergences[f])
-            if f in divergences
-            else (),
-        )
-        for f in flags
-    ]
-
-
 def _disagreeing(joined: pl.DataFrame, flag: str) -> list[int]:
     """`activity_id`s where `flag` and CAPRICHO's comment differ."""
     theirs = joined["comments"].str.contains(CAPRICHO_COMMENTS[flag], literal=True)
     return joined.filter(joined[flag] != theirs)["activity_id"].to_list()
 
 
-ADORA3_RECIPE = {  # ADORA3_data_recipe.json
-    "chembl_release": 31,
-    "min_assay_size": 20,
-    "max_assay_size": 100,
-    "strict_mutant_removal": True,
-    "calculate_pchembl": True,
-    "require_doc_date": True,
+CASES = {  # reference name -> `_ours` arguments, flags in neither reference file,
+    # flags to compare, and xfail reasons per flag
+    "ADORA3": {  # ADORA3_data_recipe.json: the recipe of CAPRICHO's own tests
+        "target": "CHEMBL256",
+        "recipe": {
+            "chembl_release": 31,
+            "min_assay_size": 20,
+            "max_assay_size": 100,
+            "strict_mutant_removal": True,
+            "calculate_pchembl": True,
+            "require_doc_date": True,
+        },
+        "discarded": ("drop_missing_year", "drop_missing_structure"),
+        "flags": (
+            "drop_validity_comment",
+            "drop_potential_duplicate",
+            "drop_unit_annotation_error",
+            "drop_mutant",
+            "drop_assay_size",
+            "drop_censored_comment",
+            "note_cross_document",
+            "note_pchembl_calculated",
+            "drop_incompatible_units",
+            "note_salt_removed",
+        ),
+        "divergences": {
+            "drop_unit_annotation_error": "CAPRICHO casts pchembl_value and "
+            "standard_value to float32, so ~1e-7 noise hides exact multiples of 3 "
+            "at tol=1e-9 (284 rows)"
+        },
+    },
+    "CHEMBL281": {  # the options ADORA3 leaves off: mixtures, undefined stereo, overlap
+        "target": "CHEMBL281",
+        "recipe": {
+            "calculate_pchembl": True,
+            "min_assay_overlap": 5,
+            "mol_flags": True,
+            "drop_unassigned_chiral": True,
+        },
+        "discarded": ("drop_missing_structure", "drop_standardization_failed"),
+        "flags": ("drop_low_assay_overlap", "drop_mixture", "drop_undefined_stereo"),
+        "divergences": {},
+    },
+    "CHEMBL281_nondefault": {  # the switches CHEMBL281 leaves at their default
+        # (`--no-chirality`, `--dont-curate-annotation-errors`, `--require-doc-date`
+        # with overlap) and non-default selections, including `--bioactivity-type`
+        # with `--calculate-pchembl`
+        "target": "CHEMBL281",
+        "recipe": {
+            "calculate_pchembl": True,
+            "chembl_release": 30,
+            "standard_types": ("Ki", "IC50"),
+            "standard_units": ("nM", "uM"),
+            "standard_relation": ("=", "<", ">"),
+            "confidence_scores": (8, 9),
+            "require_doc_date": True,
+            "min_assay_overlap": 3,
+            "mol_flags": True,
+            "chirality": False,
+            "drop_unassigned_chiral": True,
+            "curate_annotation_errors": False,
+        },
+        "discarded": (
+            "drop_missing_year",
+            "drop_missing_structure",
+            "drop_standardization_failed",
+        ),
+        "flags": (
+            "drop_validity_comment",
+            "drop_potential_duplicate",
+            "drop_censored_comment",
+            "drop_low_assay_overlap",
+            "drop_mixture",
+            "drop_undefined_stereo",
+            "note_cross_document",
+            "note_pchembl_calculated",
+            "drop_incompatible_units",
+            "note_salt_removed",
+            "note_stereo_removed",
+        ),
+        "divergences": {},
+    },
+    "CHEMBL232": {  # `--bioactivity-type Ki,Inhibition --calculate-pchembl`: real
+        # "Log Ki" rows (admitted through CAPRICHO's type expansion), inactivity
+        # comments and percent units
+        "target": "CHEMBL232",
+        "recipe": {
+            "calculate_pchembl": True,
+            "standard_types": ("Ki", "Inhibition"),
+            "mol_flags": True,
+        },
+        "discarded": ("drop_missing_structure", "drop_standardization_failed"),
+        "flags": (
+            "drop_validity_comment",
+            "drop_potential_duplicate",
+            "drop_unit_annotation_error",
+            "drop_censored_comment",
+            "drop_mixture",
+            "note_cross_document",
+            "note_pchembl_calculated",
+            "drop_incompatible_units",
+            "note_salt_removed",
+        ),
+        "divergences": {},
+    },
 }
-ADORA3_DISCARDED = ("drop_missing_year", "drop_missing_structure")  # in neither file
-ADORA3_FLAGS = (
-    "drop_validity_comment",
-    "drop_potential_duplicate",
-    "drop_unit_annotation_error",
-    "drop_mutant",
-    "drop_assay_size",
-    "drop_censored_comment",
-    "note_cross_document",
-    "note_pchembl_calculated",
-    "drop_incompatible_units",
-    "note_salt_removed",
-)
-ADORA3_DIVERGENCES = {"drop_unit_annotation_error": f"{FLOAT32_UNIT_ERRORS} (284 rows)"}
-
-
-@pytest.fixture(scope="module")
-def adora3_ours() -> pl.DataFrame:
-    return _ours("CHEMBL256", ADORA3_RECIPE)
-
-
-@pytest.fixture(scope="module")
-def adora3_theirs() -> pl.DataFrame:
-    return _theirs("ADORA3")
-
-
-@pytest.fixture(scope="module")
-def adora3(adora3_ours, adora3_theirs) -> pl.DataFrame:
-    return _joined(adora3_ours, adora3_theirs).join(
-        adora3_theirs.select("activity_id", assay_size_theirs="assay_size"),
-        on="activity_id",
+FLAG_PARAMS = [
+    pytest.param(
+        name,
+        flag,
+        marks=pytest.mark.xfail(strict=True, reason=case["divergences"][flag])
+        if flag in case["divergences"]
+        else (),
     )
-
-
-class TestAdora3AgainstCapricho:
-    """ADORA3 (CHEMBL256) on ChEMBL 36, against the output of CAPRICHO 1.0.4 run
-    with `ADORA3_RECIPE` (`tests/reference/generate_capricho.py`).
-
-    The reference holds the rows CAPRICHO fetches, split into its output and its
-    removed subset; rows without a year or structure are in neither
-    (`ADORA3_DISCARDED`). Skipped unless ChEMBL 36 is downloaded.
-    """
-
-    def test_same_activities(self, adora3_ours, adora3_theirs):
-        kept = adora3_ours.remove(pl.any_horizontal(ADORA3_DISCARDED))
-        assert sorted(kept["activity_id"]) == sorted(adora3_theirs["activity_id"])
-
-    def test_removed_are_missing_value(self, adora3):
-        assert adora3["drop_missing_value"].equals(adora3["removed"])
-
-    @pytest.mark.parametrize("flag", _flag_params(ADORA3_FLAGS, ADORA3_DIVERGENCES))
-    def test_flag(self, adora3, flag):
-        assert _disagreeing(adora3, flag) == []
-
-    def test_assay_size(self, adora3):
-        assert adora3["assay_size"].equals(adora3["assay_size_theirs"])
-
-    def test_pchembl(self, adora3):
-        """CAPRICHO stores float32, so up to ~5e-7 off."""
-        ours, theirs = adora3["pchembl_value"], adora3["pchembl_theirs"]
-        assert (ours.is_null() == theirs.is_null()).all()
-        assert ((ours - theirs).abs().max() or 0) < 1e-6
-
-
-CHEMBL281_RECIPE = {  # CHEMBL281_data_recipe.json
-    "calculate_pchembl": True,
-    "min_assay_overlap": 5,
-    "mol_flags": True,
-    "drop_unassigned_chiral": True,
-}
-CHEMBL281_DISCARDED = ("drop_missing_structure", "drop_standardization_failed")
-CHEMBL281_FLAGS = ("drop_low_assay_overlap", "drop_mixture", "drop_undefined_stereo")
-CHEMBL281_DIVERGENCES: dict[str, str] = {}
+    for name, case in CASES.items()
+    for flag in case["flags"]
+]
+all_cases = pytest.mark.parametrize("frames", list(CASES), indirect=True)
 
 
 @pytest.fixture(scope="module")
-def chembl281_ours() -> pl.DataFrame:
-    return _ours("CHEMBL281", CHEMBL281_RECIPE)
+def frames(request) -> dict:
+    """The `CASES` entry named by the parameter with `ours` (`_ours`), `theirs`
+    (`_theirs`) and `joined` (`_joined`)."""
+    case = CASES[request.param]
+    ours = _ours(case["target"], case["recipe"])
+    theirs = _theirs(request.param)
+    return case | {"ours": ours, "theirs": theirs, "joined": _joined(ours, theirs)}
 
 
-@pytest.fixture(scope="module")
-def chembl281_theirs() -> pl.DataFrame:
-    return _theirs("CHEMBL281")
+class TestAgainstCapricho:
+    """Each `CASES` entry on ChEMBL 36, against the output of CAPRICHO 1.0.4 run
+    with its recipe (`tests/reference/generate_capricho.py`).
 
-
-@pytest.fixture(scope="module")
-def chembl281(chembl281_ours, chembl281_theirs) -> pl.DataFrame:
-    return _joined(chembl281_ours, chembl281_theirs)
-
-
-class TestChembl281AgainstCapricho:
-    """CHEMBL281 on ChEMBL 36, against CAPRICHO 1.0.4 with the options ADORA3
-    leaves off: mixtures, undefined stereo (`--drop-unassigned-chiral`) and assay
-    overlap. Skipped unless ChEMBL 36 is downloaded.
-    """
-
-    def test_same_activities(self, chembl281_ours, chembl281_theirs):
-        kept = chembl281_ours.remove(pl.any_horizontal(CHEMBL281_DISCARDED))
-        assert sorted(kept["activity_id"]) == sorted(chembl281_theirs["activity_id"])
-
-    @pytest.mark.parametrize(
-        "flag", _flag_params(CHEMBL281_FLAGS, CHEMBL281_DIVERGENCES)
-    )
-    def test_flag(self, chembl281, flag):
-        assert _disagreeing(chembl281, flag) == []
-
-
-CHEMBL281_NONDEFAULT_RECIPE = {  # CHEMBL281_nondefault_data_recipe.json
-    "calculate_pchembl": True,
-    "chembl_release": 30,
-    "standard_types": ("Ki", "IC50"),
-    "standard_units": ("nM", "uM"),
-    "standard_relation": ("=", "<", ">"),
-    "confidence_scores": (8, 9),
-    "require_doc_date": True,
-    "min_assay_overlap": 3,
-    "mol_flags": True,
-    "chirality": False,
-    "drop_unassigned_chiral": True,
-    "curate_annotation_errors": False,
-}
-CHEMBL281_NONDEFAULT_DISCARDED = (
-    "drop_missing_year",
-    "drop_missing_structure",
-    "drop_standardization_failed",
-)
-CHEMBL281_NONDEFAULT_FLAGS = (
-    "drop_validity_comment",
-    "drop_potential_duplicate",
-    "drop_censored_comment",
-    "drop_low_assay_overlap",
-    "drop_mixture",
-    "drop_undefined_stereo",
-    "note_cross_document",
-    "note_pchembl_calculated",
-    "drop_incompatible_units",
-    "note_salt_removed",
-    "note_stereo_removed",
-)
-
-
-@pytest.fixture(scope="module")
-def chembl281_nondefault_ours() -> pl.DataFrame:
-    return _ours("CHEMBL281", CHEMBL281_NONDEFAULT_RECIPE)
-
-
-@pytest.fixture(scope="module")
-def chembl281_nondefault_theirs() -> pl.DataFrame:
-    return _theirs("CHEMBL281_nondefault")
-
-
-@pytest.fixture(scope="module")
-def chembl281_nondefault(
-    chembl281_nondefault_ours, chembl281_nondefault_theirs
-) -> pl.DataFrame:
-    return _joined(chembl281_nondefault_ours, chembl281_nondefault_theirs)
-
-
-class TestChembl281NondefaultAgainstCapricho:
-    """CHEMBL281 on ChEMBL 36, against CAPRICHO 1.0.4 with the switches
-    CHEMBL281 leaves at their default (`--no-chirality`,
-    `--dont-curate-annotation-errors`, `--require-doc-date` with overlap) and
-    non-default selections, including `--bioactivity-type` with
-    `--calculate-pchembl`. Skipped unless ChEMBL 36 is downloaded.
-    """
-
-    def test_same_activities(
-        self, chembl281_nondefault_ours, chembl281_nondefault_theirs
-    ):
-        ours = chembl281_nondefault_ours
-        kept = ours.remove(pl.any_horizontal(CHEMBL281_NONDEFAULT_DISCARDED))
-        theirs = chembl281_nondefault_theirs
-        assert sorted(kept["activity_id"]) == sorted(theirs["activity_id"])
-
-    def test_removed_are_missing_value_or_mixture(self, chembl281_nondefault):
-        df = chembl281_nondefault
-        ours = df["drop_missing_value"] | df["drop_mixture"]
-        assert ours.equals(df["removed"])
-
-    def test_no_unit_annotation_errors(self, chembl281_nondefault):
-        assert "drop_unit_annotation_error" not in chembl281_nondefault.columns
-        comments = chembl281_nondefault["comments"]
-        assert not comments.str.contains("Unit Annotation Error", literal=True).any()
-
-    @pytest.mark.parametrize("flag", CHEMBL281_NONDEFAULT_FLAGS)
-    def test_flag(self, chembl281_nondefault, flag):
-        assert _disagreeing(chembl281_nondefault, flag) == []
-
-
-CHEMBL232_RECIPE = {  # CHEMBL232_data_recipe.json
-    "calculate_pchembl": True,
-    "standard_types": ("Ki", "Inhibition"),
-    "mol_flags": True,
-}
-CHEMBL232_DISCARDED = ("drop_missing_structure", "drop_standardization_failed")
-CHEMBL232_FLAGS = (
-    "drop_validity_comment",
-    "drop_potential_duplicate",
-    "drop_unit_annotation_error",
-    "drop_censored_comment",
-    "drop_mixture",
-    "note_cross_document",
-    "note_pchembl_calculated",
-    "drop_incompatible_units",
-    "note_salt_removed",
-)
-CHEMBL232_DIVERGENCES: dict[str, str] = {}
-
-
-@pytest.fixture(scope="module")
-def chembl232_ours() -> pl.DataFrame:
-    return _ours("CHEMBL232", CHEMBL232_RECIPE)
-
-
-@pytest.fixture(scope="module")
-def chembl232_theirs() -> pl.DataFrame:
-    return _theirs("CHEMBL232")
-
-
-@pytest.fixture(scope="module")
-def chembl232(chembl232_ours, chembl232_theirs) -> pl.DataFrame:
-    return _joined(chembl232_ours, chembl232_theirs)
-
-
-class TestChembl232AgainstCapricho:
-    """CHEMBL232 on ChEMBL 36, against CAPRICHO 1.0.4 with `--bioactivity-type
-    Ki,Inhibition --calculate-pchembl`: real "Log Ki" rows (admitted through
-    CAPRICHO's type expansion), inactivity comments and percent units.
+    A reference holds the rows CAPRICHO fetches, split into its output and its
+    removed subset; rows the case's `discarded` flags mark are in neither.
     Skipped unless ChEMBL 36 is downloaded.
     """
 
-    def test_same_activities(self, chembl232_ours, chembl232_theirs):
-        kept = chembl232_ours.remove(pl.any_horizontal(CHEMBL232_DISCARDED))
-        assert sorted(kept["activity_id"]) == sorted(chembl232_theirs["activity_id"])
+    @all_cases
+    def test_same_activities(self, frames):
+        kept = frames["ours"].remove(pl.any_horizontal(frames["discarded"]))
+        assert sorted(kept["activity_id"]) == sorted(frames["theirs"]["activity_id"])
 
-    def test_recipe_has_log_types(self, chembl232_theirs):
+    @all_cases
+    def test_removed_are_missing_value_or_mixture(self, frames):
+        j = frames["joined"]
+        ours = cs.by_name("drop_missing_value", "drop_mixture", require_all=False)
+        assert j.select(pl.any_horizontal(ours)).to_series().equals(j["removed"])
+
+    @pytest.mark.parametrize("frames, flag", FLAG_PARAMS, indirect=["frames"])
+    def test_flag(self, frames, flag):
+        assert _disagreeing(frames["joined"], flag) == []
+
+    @all_cases
+    def test_pchembl(self, frames):
+        """CAPRICHO stores float32, so up to ~5e-7 off."""
+        j = frames["joined"]
+        ours, theirs = j["pchembl_value"], j["pchembl_theirs"]
+        assert (ours.is_null() == theirs.is_null()).all()
+        assert ((ours - theirs).abs().max() or 0) < 1e-6
+
+    @pytest.mark.parametrize("frames", ["ADORA3"], indirect=True)
+    def test_assay_size(self, frames):
+        j = frames["ours"].join(
+            frames["theirs"].select("activity_id", assay_size_theirs="assay_size"),
+            on="activity_id",
+        )
+        assert j["assay_size"].equals(j["assay_size_theirs"])
+
+    @pytest.mark.parametrize("frames", ["CHEMBL281_nondefault"], indirect=True)
+    def test_no_unit_annotation_errors(self, frames):
+        j = frames["joined"]
+        assert "drop_unit_annotation_error" not in j.columns
+        assert (
+            not j["comments"].str.contains("Unit Annotation Error", literal=True).any()
+        )
+
+    @pytest.mark.parametrize("frames", ["CHEMBL232"], indirect=True)
+    def test_recipe_has_log_types(self, frames):
         """ChEMBL has "Log Ki" rows here; CAPRICHO fetches and then drops them,
         which `test_same_activities` checks."""
         log_ki = Chembl.from_version("36").view.bioactivity.filter(
             target_chembl_id="CHEMBL232", standard_type="Log Ki"
         )
         assert log_ki.select(pl.len()).collect().item() > 0
-        assert not (chembl232_theirs["standard_type"] == "Log Ki").any()
-
-    def test_removed_are_missing_value_or_mixture(self, chembl232):
-        ours = chembl232["drop_missing_value"] | chembl232["drop_mixture"]
-        assert ours.equals(chembl232["removed"])
-
-    @pytest.mark.parametrize(
-        "flag", _flag_params(CHEMBL232_FLAGS, CHEMBL232_DIVERGENCES)
-    )
-    def test_flag(self, chembl232, flag):
-        assert _disagreeing(chembl232, flag) == []
-
-    def test_pchembl(self, chembl232):
-        """CAPRICHO stores float32, so up to ~5e-7 off."""
-        ours, theirs = chembl232["pchembl_value"], chembl232["pchembl_theirs"]
-        assert (ours.is_null() == theirs.is_null()).all()
-        assert ((ours - theirs).abs().max() or 0) < 1e-6
+        assert not (frames["theirs"]["standard_type"] == "Log Ki").any()
 
 
 def _activity_ids(ids: pl.Expr) -> pl.Expr:
@@ -921,18 +824,11 @@ def _aggregated_pair(ours: pl.DataFrame, name: str, chirality: bool) -> pl.DataF
     )
 
 
-@pytest.fixture(
-    scope="module",
-    params=[
-        ("CHEMBL281", CHEMBL281_RECIPE),
-        ("CHEMBL281_nondefault", CHEMBL281_NONDEFAULT_RECIPE),
-    ],
-    ids=lambda p: p[0],
-)
+@pytest.fixture(scope="module", params=["CHEMBL281", "CHEMBL281_nondefault"])
 def aggregated(request) -> pl.DataFrame:
-    name, recipe = request.param
-    chirality = recipe.get("chirality", True)
-    return _aggregated_pair(_ours("CHEMBL281", recipe), name, chirality)
+    case = CASES[request.param]
+    ours = _ours(case["target"], case["recipe"])
+    return _aggregated_pair(ours, request.param, case["recipe"].get("chirality", True))
 
 
 class TestAggregateAgainstCapricho:

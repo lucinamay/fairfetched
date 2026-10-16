@@ -508,26 +508,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chemsplit"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "joblib" },
-    { name = "numba" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "rdkit" },
-    { name = "scaffound" },
-    { name = "scikit-learn" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/95/21/74d04213ad94a1b53d4617d6a7ba52adbef30721ad3d7e97055f16f5ae7f/chemsplit-0.1.2.tar.gz", hash = "sha256:c8ef86ffe6c078bbcb6aaba71437803b3b53d3e2341499c76d09a889586ec0cc", size = 371102, upload-time = "2026-10-08T06:11:11.501Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/2c/2f998dbde5cb349f7676341fac8de57f3759eac08dfc249411a3aace2ee2/chemsplit-0.1.2-py3-none-any.whl", hash = "sha256:affaf4de0310c0f72c1401d513e6a29e72f096bc8a9ddd43a50634c964f81344", size = 303992, upload-time = "2026-10-08T06:11:09.533Z" },
-]
-
-[[package]]
 name = "click"
 version = "8.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -816,7 +796,6 @@ adrecs = [
 ]
 dev = [
     { name = "chembl-structure-pipeline" },
-    { name = "chemsplit" },
     { name = "fastexcel" },
     { name = "nanoom", extra = ["chem"] },
     { name = "papyrus-structure-pipeline" },
@@ -836,7 +815,6 @@ rough = [
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 split = [
-    { name = "chemsplit" },
     { name = "nanoom", extra = ["chem"] },
     { name = "pulp" },
 ]
@@ -871,7 +849,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "chembl-structure-pipeline", marker = "extra == 'standardise'", specifier = ">=1.2.4" },
-    { name = "chemsplit", marker = "extra == 'split'", specifier = ">=0.1.2" },
     { name = "duckdb", specifier = ">=1.5.5" },
     { name = "fairfetched", extras = ["adrecs"], marker = "extra == 'dev'", editable = "." },
     { name = "fairfetched", extras = ["rdkit"], marker = "extra == 'standardise'", editable = "." },
@@ -2598,20 +2575,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/75/33c2e887a68e57b356cda74d325d6ebe406bb72ad8c4e2d067d4fa9b697b/rust_just-1.46.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:e9d8a879fb86eb1c7f7f83953999ae4ce53ea4e5c0ca531cf6ff09e1e9335ff7", size = 1900319, upload-time = "2026-01-03T02:03:09.873Z" },
     { url = "https://files.pythonhosted.org/packages/44/30/6b1677aa64a4f69f3ec174b5e2a9a49e0ffd06946d4b4dc8295366fbd9dd/rust_just-1.46.0-py3-none-win32.whl", hash = "sha256:100701de91bded3f6f2bf564d09c2f8e483b8dfb490d1c74008ce3c01ff0ff67", size = 1623463, upload-time = "2026-01-03T02:03:12.343Z" },
     { url = "https://files.pythonhosted.org/packages/64/61/97ad7a1ea67b9485404b18150c258015842cf116a1ce626421863fd8f0e1/rust_just-1.46.0-py3-none-win_amd64.whl", hash = "sha256:ccaf8e473f64f5c815b0039e883a1feaf5634b9cdffd1dbff9e5fde77b5926f4", size = 1801103, upload-time = "2026-01-03T02:03:15.256Z" },
-]
-
-[[package]]
-name = "scaffound"
-version = "0.0.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "rdkit" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/04/84/4446a41c724aaebfaa51e33887c5653b06748bc8e4faf12f5821818326f5/scaffound-0.0.1.tar.gz", hash = "sha256:afbfef2be10cc2fcb1dbf604ef88dde2d6e5186bfaa942f130a9bf678573296b", size = 28349, upload-time = "2025-08-04T14:46:15.027Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/48/3fb68b9d98d3f16f4797475e17d50f87775338f54bfc7ffd36cc1787129a/scaffound-0.0.1-py3-none-any.whl", hash = "sha256:40ab80a495b11c0ead94d39cefa3626bee29ba6eae1578d4d41659823331709e", size = 22808, upload-time = "2025-08-04T14:46:13.963Z" },
 ]
 
 [[package]]

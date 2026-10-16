@@ -228,17 +228,16 @@ def flag(
         standard_types,
         chembl_release,
     )
-    unfetched = pl.any_horizontal(pl.lit(False), *selection)
+    fetch = dict(selection)
     if standard_types is not None and calculate_pchembl:
         # CAPRICHO also fetches "Log <type>" and "-Log <type>": they take part in
         # its steps on the whole fetch (pChEMBL, unit errors, overlap), then it
         # drops them before standardizing (`get_standardize_and_clean_workflow`)
         logged = [f"{sign}Log {t}" for t in standard_types for sign in ("", "-")]
-        unfetched = pl.any_horizontal(
-            pl.lit(False),
-            *(name for name in selection if name != "drop_standard_type"),
-            de.is_not_in("standard_type", [*standard_types, *logged]),
+        fetch["drop_standard_type"] = de.is_not_in(
+            "standard_type", [*standard_types, *logged]
         )
+    unfetched = pl.any_horizontal(*fetch.values())
     if calculate_pchembl:
         missing, convertible = de.is_missing("pchembl_value"), ~de.has_non_molar_units()
         bioactivity = bioactivity.with_columns(

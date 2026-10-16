@@ -14,7 +14,7 @@ import polars as pl
 from fairfetched.get import Chembl
 from fairfetched.prep import capricho
 from tests.reference.generate_capricho import read_capricho, run_capricho
-from tests.test_capricho import CAPRICHO_COMMENTS
+from tests.test_capricho import CAPRICHO_COMMENTS, _joined
 
 SPEC = "1.0.4"
 MAX_ROWS = 3000  # per target under the default selection, to bound the run
@@ -94,18 +94,7 @@ def compare(o: pl.DataFrame, t: pl.DataFrame) -> pl.DataFrame:
         f"activities: ours {len(ids_o)}, CAPRICHO {len(ids_t)}, "
         f"only ours {len(ids_o - ids_t)}, only CAPRICHO {len(ids_t - ids_o)}"
     )
-    comments = pl.concat_str(
-        "data_dropping_comment", "data_processing_comment", ignore_nulls=True
-    )
-    j = kept.join(
-        t.select(
-            "activity_id",
-            "removed",
-            comments=comments.fill_null(""),
-            pchembl_theirs=pl.col("pchembl_value").fill_nan(None),
-        ),
-        on="activity_id",
-    )
+    j = _joined(kept, t)
     d = (j["pchembl_value"] - j["pchembl_theirs"]).abs()
     print(
         f"pchembl: null differs {(j['pchembl_value'].is_null() != j['pchembl_theirs'].is_null()).sum()}, "
