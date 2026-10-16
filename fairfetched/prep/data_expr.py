@@ -11,7 +11,7 @@ TODO: move `split_expr.kfold` here once the module shape settles.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import polars as pl
 
@@ -27,6 +27,96 @@ INACTIVE_COMMENTS = (  # CAPRICHO REVIEW_ACTIVITY_COMMENTS
 )
 MOLAR_UNITS = ("nM", "uM", "µM", "mM")
 MOLAR_EXPONENT = {"nM": -9, "uM": -6, "µM": -6, "mM": -3}  # CAPRICHO convert_to_log10 units
+# CAPRICHO 1.0.4 `chembl/unit_conversions.py`, verbatim: target label ->
+# {lowercased, stripped unit: factor}; no key is in two tables or a target label
+UNIT_CONVERSIONS = {
+    "10^-6 cm/s": {
+        "cm s-1": 1e6,
+        "cm/s": 1e6,
+        "nm s-1": 0.1,
+        "nm/s": 0.1,
+        "10'-6 cm/s": 1.0,
+        "10^-6 cm/s": 1.0,
+        "ucm/s": 1.0,
+        "cm/s * 10e6": 1.0,
+        "10'6cm/s": 1.0,
+        "10^6cm/s": 1.0,
+        "10'-7 cm/s": 0.1,
+        "10'-5cm/s": 10.0,
+        "10'-5 cm/s": 10.0,
+        "10^-5 cm/s": 10.0,
+        "10^-5cm/s": 10.0,
+        "1e-6 cm/s": 1.0,
+        "10-6 cm/s": 1.0,
+        "10'-8m/s": 1.0,
+        "10'-9meter/s": 0.1,
+        "10^-5 cm/min": 10 / 60,
+        "10'-6nanometer/s": 1e-7,
+    },
+    "nM": {"nm": 1.0, "um": 1000.0, "µm": 1000.0, "mm": 1e6, "pm": 0.001, "m": 1e9},
+    "ug/mL": {
+        "ug/ml": 1.0,
+        "ug.ml-1": 1.0,
+        "ug ml-1": 1.0,
+        "ng/ml": 0.001,
+        "ng ml-1": 0.001,
+        "ng.ml-1": 0.001,
+        "mg/ml": 1000.0,
+        "mg ml-1": 1000.0,
+        "mg.ml-1": 1000.0,
+        "mg/l": 1.0,
+        "mg l-1": 1.0,
+        "mg.l-1": 1.0,
+        "pg/ml": 1e-6,
+        "pg ml-1": 1e-6,
+        "pg.ml-1": 1e-6,
+    },
+    "mg/kg": {
+        "mg/kg": 1.0,
+        "mg.kg-1": 1.0,
+        "mg kg-1": 1.0,
+        "ug/kg": 0.001,
+        "ug.kg-1": 0.001,
+        "ug kg-1": 0.001,
+    },
+    "hr": {
+        "hr": 1.0,
+        "hour": 1.0,
+        "hours": 1.0,
+        "h": 1.0,
+        "min": 1 / 60,
+        "minute": 1 / 60,
+        "minutes": 1 / 60,
+        "s": 1 / 3600,
+        "sec": 1 / 3600,
+        "second": 1 / 3600,
+        "seconds": 1 / 3600,
+        "ms": 1 / 3600000,
+        "millisecond": 1 / 3600000,
+        "milliseconds": 1 / 3600000,
+        "day": 24.0,
+        "days": 24.0,
+        "d": 24.0,
+    },
+}
+# units that only match in this spelling, unlike CAPRICHO; their other spellings
+# in ChEMBL 36 `standard_units` (rows with a value) are mostly not that unit:
+# mm 95,027 lengths; nm 1,726 lengths, wavelengths; m 69 distances;
+# nM s-1 16 rates (4 permeabilities); 10'-8M/s 1 rate (dev/unit_case_collisions.py)
+CASE_SENSITIVE_UNITS = {
+    u.lower(): u
+    for u in (
+        "nM",
+        # "uM",  # um: 2,342 µM vs 1,223 µm; the µM matter more for bioactivity
+        "µM",
+        "mM",
+        "pM",
+        "M",
+        # "nm/s",  # nM/s: 164 Caco-2/MDCK permeabilities vs 129 rates
+        "nm s-1",
+        "10'-8m/s",
+    )
+}
 MUTANT_WORDS = ("mutant", "mutation", "variant")
 DUPLICATE_KEYS = (
     "molregno",
@@ -129,6 +219,45 @@ def pchembl(value: str = "standard_value", units: str = "standard_units") -> pl.
         MOLAR_EXPONENT, default=None, return_dtype=pl.Float64
     )
     return pl.when(pl.col(value) > 0).then(-pl.col(value).log10() - exponent)
+
+
+def convert_units(
+    value: str = "standard_value",
+    units: str = "standard_units",
+    case_sensitive_units: Mapping[str, str] = CASE_SENSITIVE_UNITS,
+) -> dict[str, pl.Expr]:
+    """`value` times the factor and `units` set to the target of `UNIT_CONVERSIONS`,
+    as CAPRICHO's five `convert_*_units` with `flag_unit_conversion`, for
+    `with_columns(**convert_units())`.
+
+    Units match stripped and lowercased, as CAPRICHO, except
+    `case_sensitive_units` (lowercased -> only spelling that matches); `{}` is
+    CAPRICHO's matching, which fits raw ChEMBL `units` (1,367,909 um there are uM).
+
+    `note_unit_converted` holds the original {`value`, `units`} for every row
+    whose unit is in a table, so also already-target units (factor 1) and null
+    values, which stay unchanged; null otherwise. CAPRICHO comments the same rows.
+    Mistyped units still convert, e.g. ChEMBL's mM zones of inhibition (mm).
+    """
+    stripped = pl.col(units).str.strip_chars()
+    lowered = stripped.str.to_lowercase()
+    spelling = lowered.replace_strict(
+        case_sensitive_units, default=None, return_dtype=pl.String
+    )
+    unit = pl.when(spelling.is_null() | (stripped == spelling)).then(lowered)
+    lookup = {u: t for t, table in UNIT_CONVERSIONS.items() for u in table}
+    factors = {u: f for table in UNIT_CONVERSIONS.values() for u, f in table.items()}
+    factor = unit.replace_strict(factors, default=None, return_dtype=pl.Float64)
+    converted = factor.is_not_null() & pl.col(value).is_not_null()
+    return {
+        value: pl.when(converted).then(pl.col(value) * factor).otherwise(value),
+        units: pl.when(converted)
+        .then(unit.replace_strict(lookup, default=None))
+        .otherwise(units),
+        "note_unit_converted": pl.when(factor.is_not_null()).then(
+            pl.struct(value, units)
+        ),
+    }
 
 
 def fragments_without_salts(smiles: str | pl.Expr = "standard_smiles") -> pl.Expr:

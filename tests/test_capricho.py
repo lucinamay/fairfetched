@@ -164,6 +164,26 @@ class TestCalculatePchembl:
         assert out["pchembl_value"].to_list() == [None]
 
 
+class TestConvertUnits:
+    def test_after_pchembl(self):
+        """pChEMBL is calculated from the original 1 uM; CAPRICHO would then
+        multiply it by 1000 (`flag` docstring)."""
+        rows = [{"pchembl_value": None, "standard_value": 1.0, "standard_units": "uM"}]
+        out = _capricho.flag(
+            _bioactivity(rows), calculate_pchembl=True, convert_units=True
+        ).collect()
+        assert out["pchembl_value"].to_list() == [6.0]
+        assert out["standard_value"].to_list() == [1000.0]
+        assert out["standard_units"].to_list() == ["nM"]
+        assert out["note_unit_converted"].to_list() == [
+            {"standard_value": 1.0, "standard_units": "uM"}
+        ]
+
+    def test_off_by_default(self):
+        out = _capricho.flag(_bioactivity([{}])).collect_schema().names()
+        assert "note_unit_converted" not in out
+
+
 class TestCrossDocument:
     def test_null_mutation_is_wild_type_and_null_organism_left_out(self):
         """Pairs of the same value in two documents: null mutation (CAPRICHO's

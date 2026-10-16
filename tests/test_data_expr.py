@@ -3,11 +3,14 @@
 runs CAPRICHO itself (`uv run --group capricho pytest`); its strict xfails are the
 documented divergences."""
 
+import ast
+import inspect
 import math
 import random
 import re
 from collections import defaultdict
 from functools import partial
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -414,6 +417,133 @@ class TestPchembl:
             6.0,
             3.0,
         ]
+
+
+UNIT_REFERENCE = (
+    Path(__file__).parent / "reference/capricho/1.0.4/unit_conversions.parquet"
+)
+
+
+class TestConvertUnits:
+    @staticmethod
+    def _convert(rows: list[tuple]) -> pl.DataFrame:
+        df = pl.DataFrame(
+            rows, schema=["standard_value", "standard_units"], orient="row"
+        )
+        return df.with_columns(**de.convert_units())
+
+    def test_factors(self):
+        """1 uM = 1000 nM, 1 ng/ml = 0.001 ug/mL, 90 min = 1.5 hr, 1 cm/s = 1e6 x
+        10^-6 cm/s; units match lowercased and stripped."""
+        out = self._convert(
+            [(1.0, "uM"), (1.0, " NG/ML "), (90.0, "min"), (1.0, "cm/s"), (5.0, "%")]
+        )
+        assert out["standard_value"].to_list() == pytest.approx(
+            [1000.0, 0.001, 1.5, 1e6, 5.0]
+        )
+        assert out["standard_units"].to_list() == [
+            "nM",
+            "ug/mL",
+            "hr",
+            "10^-6 cm/s",
+            "%",
+        ]
+
+    def test_note_keeps_originals(self):
+        """Also for a target unit and a null value, which stay unchanged."""
+        out = self._convert([(1.0, "uM"), (2.0, "nM"), (None, "uM"), (3.0, "%")])
+        assert out["note_unit_converted"].to_list() == [
+            {"standard_value": 1.0, "standard_units": "uM"},
+            {"standard_value": 2.0, "standard_units": "nM"},
+            {"standard_value": None, "standard_units": "uM"},
+            None,
+        ]
+        assert out["standard_units"].to_list() == ["nM", "nM", "uM", "%"]
+
+    def test_case_sensitive_units(self):
+        """Lengths (mm, nm, m) and nM s-1 rates stay; their SI spellings
+        convert, other units (also um as uM, nM/s as nm/s) in any case."""
+        out = self._convert(
+            [
+                (1.0, "mm"),
+                (1.0, "nm"),
+                (1.0, "m"),
+                (1.0, "nM s-1"),
+                (1.0, "um"),
+                (1.0, "mM"),
+                (1.0, "M"),
+                (1.0, "nM/s"),
+                (1.0, "mg Kg-1"),
+            ]
+        )
+        assert out["standard_value"].to_list() == pytest.approx(
+            [1.0, 1.0, 1.0, 1.0, 1e3, 1e6, 1e9, 0.1, 1.0]
+        )
+        assert (
+            out["note_unit_converted"].is_null().to_list() == [True] * 4 + [False] * 5
+        )
+
+    def test_chembl_units_as_capricho(self):
+        """Every distinct ChEMBL 36 `standard_units`, with value 1.0 and null,
+        through CAPRICHO 1.0.4 (`generate_capricho.unit_reference`); spellings of
+        `CASE_SENSITIVE_UNITS` that CAPRICHO converts are left unchanged."""
+        theirs = pl.read_parquet(UNIT_REFERENCE)
+        respelled = pl.Series(
+            [
+                u is not None
+                and u.strip().lower() in de.CASE_SENSITIVE_UNITS
+                and u.strip() != de.CASE_SENSITIVE_UNITS[u.strip().lower()]
+                for u in theirs["units_in"]
+            ]
+        )
+        theirs = theirs.with_columns(
+            standard_units=pl.when(respelled)
+            .then("units_in")
+            .otherwise("standard_units"),
+            standard_value=pl.when(respelled)
+            .then("value_in")
+            .otherwise("standard_value"),
+            noted=pl.col("data_processing_comment").str.contains("Unit converted")
+            & ~respelled,
+        )
+        ours = theirs.select(
+            standard_value="value_in", standard_units="units_in"
+        ).with_columns(**de.convert_units())
+        assert respelled.sum() == 10  # 5 spellings, value 1.0 and null
+        assert ours["standard_units"].equals(theirs["standard_units"])
+        assert ours["standard_value"].equals(theirs["standard_value"])
+        assert ours["note_unit_converted"].is_not_null().equals(theirs["noted"])
+
+    def test_case_insensitive_is_capricho(self):
+        theirs = pl.read_parquet(UNIT_REFERENCE)
+        ours = theirs.select(
+            standard_value="value_in", standard_units="units_in"
+        ).with_columns(**de.convert_units(case_sensitive_units={}))
+        assert ours["standard_units"].equals(theirs["standard_units"])
+        assert ours["standard_value"].equals(theirs["standard_value"])
+        noted = theirs["data_processing_comment"].str.contains("Unit converted")
+        assert ours["note_unit_converted"].is_not_null().equals(noted)
+
+    def test_tables_as_capricho(self):
+        """`UNIT_CONVERSIONS` equals the `conversions` dict and `target_label` of
+        each installed CAPRICHO `convert_*_units` (local variables, so read from
+        the source)."""
+        uc = pytest.importorskip("Capricho.chembl.unit_conversions")
+        tables = {}
+        for fn in ast.parse(inspect.getsource(uc)).body:
+            if not (isinstance(fn, ast.FunctionDef) and fn.name.startswith("convert_")):
+                continue
+            assigned = {
+                node.targets[0].id: node.value
+                for node in ast.walk(fn)
+                if isinstance(node, ast.Assign)
+                and isinstance(node.targets[0], ast.Name)
+            }
+            label = ast.literal_eval(assigned["target_label"])
+            tables[label] = eval(
+                compile(ast.Expression(assigned["conversions"]), "", "eval")
+            )
+        assert tables == de.UNIT_CONVERSIONS
 
 
 class TestAgainstCapricho:

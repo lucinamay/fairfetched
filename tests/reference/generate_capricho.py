@@ -2,8 +2,9 @@
 CAPRICHO version, into `capricho/<name>/<recipe>_data_*`; a recipe is skipped when
 its `_recipe.json` (written last) exists. Keeps the rows CAPRICHO outputs
 (`_not_aggregated`) and those it removes (`_removed_subset`), as parquet, and
-CAPRICHO's `aggregate_data` on the former (`_aggregated`), run in-process with
-the installed CAPRICHO, which must be the given version.
+CAPRICHO's `aggregate_data` on the former (`_aggregated`) and its unit
+conversions (`unit_conversions.parquet`), run in-process with the installed
+CAPRICHO, which must be the given version.
 
 ADORA3 runs the command of CAPRICHO's `tests/resources/ADORA3_data_recipe.json`;
 CHEMBL281 the options ADORA3 leaves off (mixtures, undefined stereo, assay
@@ -135,8 +136,45 @@ def aggregate_reference(out: Path, recipe: str) -> None:
     )
 
 
+def unit_reference(out: Path) -> None:
+    """CAPRICHO's five `convert_*_units`, each followed by `flag_unit_conversion`
+    as in `get_standardize_and_clean_workflow`, on every distinct
+    `standard_units` of ChEMBL 36 with `standard_value` 1.0 and null, into
+    `unit_conversions.parquet` (`units_in`, `value_in` before conversion)."""
+    from Capricho.chembl import unit_conversions as uc
+    from Capricho.chembl.data_flag_functions import flag_unit_conversion
+
+    if out.name != package_version("capricho"):
+        raise RuntimeError(f"installed CAPRICHO is not {out.name}")
+    units = (
+        Chembl.from_version(CHEMBL_VERSION)
+        .view.bioactivity.select(pl.col("standard_units").unique())
+        .collect()
+    )
+    df = (
+        units.join(pl.DataFrame({"standard_value": [1.0, None]}), how="cross")
+        .with_columns(
+            units_in="standard_units",
+            value_in="standard_value",
+            data_processing_comment=pl.lit(""),
+        )
+        .to_pandas()
+    )
+    for convert in (
+        uc.convert_permeability_units,
+        uc.convert_molar_concentration_units,
+        uc.convert_mass_concentration_units,
+        uc.convert_dose_units,
+        uc.convert_time_units,
+    ):
+        df = flag_unit_conversion(convert(df))
+    pl.from_pandas(df).write_parquet(out / "unit_conversions.parquet")
+
+
 def generate(spec: str, pystow_home: Path) -> Path:
     out = OUT / _name(spec)
+    if not (out / "unit_conversions.parquet").exists():
+        unit_reference(out)
     for recipe in RECIPES:
         if (out / f"{recipe}_data_recipe.json").exists() and not (
             out / f"{recipe}_data_aggregated.parquet"

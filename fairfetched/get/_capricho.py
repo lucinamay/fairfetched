@@ -179,6 +179,7 @@ def flag(
     chirality: bool = True,
     drop_unassigned_chiral: bool = False,
     parallel: bool = False,
+    convert_units: bool = False,
     engine: Engine = "polars",
 ) -> pl.LazyFrame:
     """`bioactivity` (columns of `Chembl.view.bioactivity`) with one pl.Boolean
@@ -196,10 +197,17 @@ def flag(
     (`drop_missing_year`) take no part in the cross-document and overlap flags,
     as CAPRICHO removes them before those. `curate_annotation_errors` adds
     `drop_unit_annotation_error`. `mol_flags` standardizes every distinct
-    structure with RDKit into `standard_smiles`, which `aggregate` needs (`_with_mol_flags`; ~4 ms each, ~3 h for all of ChEMBL
-    on one process; `parallel` uses cpu_count // 2.2 processes); `chirality` and
-    `drop_unassigned_chiral` need it. Values stay float64; CAPRICHO's float32
+    structure with RDKit into `standard_smiles`, which `aggregate` needs
+    (`_with_mol_flags`; ~4 ms each, ~3 h for all of ChEMBL on one process;
+    `parallel` uses cpu_count // 2.2 processes); `chirality` and
+    `drop_unassigned_chiral` need it. `convert_units` converts `standard_value`
+    and `standard_units` (`de.convert_units`, originals in `note_unit_converted`)
+    after every other flag, as CAPRICHO. Values stay float64; CAPRICHO's float32
     cast makes it miss unit annotation errors (284 of 6181 ADORA3 rows).
+
+    CAPRICHO 1.0.4 (and main at 0ec273e) converts `--value-column`, by default
+    `pchembl_value`, not `standard_value`: a pChEMBL calculated from 1 uM (6.0)
+    becomes 6000.0. Here `pchembl_value` is never converted.
     """
     if engine != "polars":
         raise NotImplementedError(f"engine={engine!r}; only 'polars' so far")
@@ -278,6 +286,8 @@ def flag(
             skip=unfetched | undated,
             name="drop_low_assay_overlap",
         )
+    if convert_units:
+        lf = lf.with_columns(**de.convert_units())
     return lf
 
 
