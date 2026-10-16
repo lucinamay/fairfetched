@@ -23,7 +23,7 @@ standardise = [
 ]
 split = [
     "chemsplit>=0.1.2",
-    "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
+    "nanoom[chem]>=0.1.0a20260815", # fold assignment in prep.split_expr
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
 ]
 rough = ["scipy>=1.6"] # distances + clustering in prep.rough_expr; 1.6 adds integrate.trapezoid
