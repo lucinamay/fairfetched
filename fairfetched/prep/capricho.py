@@ -403,7 +403,7 @@ def aggregate(
         )
     relation = pl.col("standard_relation").fill_null("=")
     decimals = 2 if value == "pchembl_value" else 4
-    key = _identifier("standard_smiles", compound_equality, parallel)
+    key = pl.col(_KEY)
     censored_key = pl.format("{}_{}_{}", key, relation, pl.col(value).round(decimals))
     ids = [*extra_id_cols, "target_chembl_id", "standard_relation"]
     multival = [value, *(c for c in MULTIVAL if c != value), *extra_multival_cols]
@@ -412,7 +412,12 @@ def aggregate(
     else:
         ids.append("mutation")
     out = (
+        # key as a column first: a parallel (non-elementwise) key UDF used twice in
+        # the when/then below panics polars 1.35.2 in the group_by plan
         lf.with_columns(
+            **{_KEY: _identifier("standard_smiles", compound_equality, parallel)}
+        )
+        .with_columns(
             standard_relation=relation,
             mutation=pl.col("mutation").fill_null("WT"),  # as CAPRICHO's downloader
             **{_KEY: pl.when(relation != "=").then(censored_key).otherwise(key)},

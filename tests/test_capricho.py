@@ -472,6 +472,19 @@ class TestAggregate:
         assert out["pchembl_value_mean"].to_list() == [5.0, 4.0]
         assert out["pchembl_value_std"].to_list() == [None, None]
 
+    def test_parallel_equals_serial(self):
+        """400 ADORA3 rows of ChEMBL 36: the multi-chunk frame that panicked
+        polars 1.35.2 when the parallel key UDF appeared twice in one plan."""
+        if not (CHEMBL_DIR / "36" / "parquet").exists():
+            pytest.skip("ChEMBL 36 not downloaded")
+        chembl = Chembl.from_version("36")
+        rows = chembl.view.bioactivity.filter(target_chembl_id="CHEMBL256").head(400)
+        lf = capricho.flag(rows, chembl.lfs["activities"], mol_flags=True).remove(
+            pl.any_horizontal(cs.starts_with("drop_"))
+        )
+        serial = capricho.aggregate(lf).collect()
+        assert capricho.aggregate(lf, parallel=True).collect().equals(serial)
+
     def test_null_relation_is_equal(self):
         out = _aggregated([{"standard_relation": None}, {}])
         assert out["standard_relation"].to_list() == ["="]
