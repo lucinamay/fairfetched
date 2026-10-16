@@ -99,6 +99,8 @@ UNIT_CONVERSIONS = {
         "d": 24.0,
     },
 }
+_TARGETS = {u: t for t, table in UNIT_CONVERSIONS.items() for u in table}
+_FACTORS = {u: f for table in UNIT_CONVERSIONS.values() for u, f in table.items()}
 # units that only match in this spelling, unlike CAPRICHO; their other spellings
 # in ChEMBL 36 `standard_units` (rows with a value) are mostly not that unit:
 # mm 95,027 lengths; nm 1,726 lengths, wavelengths; m 69 distances;
@@ -116,6 +118,15 @@ CASE_SENSITIVE_UNITS = {
         "nm s-1",
         "10'-8m/s",
     )
+}
+# target unit -> `standard_type`s that cannot carry it (dev/unit_case_collisions.py);
+# ChEMBL 36, rows with a value: lengths in mM 2,566, um 315, uM 51; log values in
+# nM 788, uM 646, mM 265, M 231 and cm/s units 175 (log Pe, log Kp). `^p[A-Z]`
+# (pKi, pXC50) only for molar units: pBBB is a permeability.
+UNIT_TYPE_MISMATCH = {
+    "nM": r"(?i:\bIZ\b|zone|diameter|swelling|thickness|\bsize\b|length|radius|\blog\b)"
+    r"|^p[A-Z]",
+    "10^-6 cm/s": r"(?i:\blog\b)",
 }
 MUTANT_WORDS = ("mutant", "mutation", "variant")
 DUPLICATE_KEYS = (
@@ -221,9 +232,40 @@ def pchembl(value: str = "standard_value", units: str = "standard_units") -> pl.
     return pl.when(pl.col(value) > 0).then(-pl.col(value).log10() - exponent)
 
 
+def _unit_key(units: str, case_sensitive_units: Mapping[str, str]) -> pl.Expr:
+    """`units` stripped and lowercased, null for other spellings of
+    `case_sensitive_units` (lowercased -> only spelling that matches)."""
+    stripped = pl.col(units).str.strip_chars()
+    lowered = stripped.str.to_lowercase()
+    spelling = lowered.replace_strict(
+        case_sensitive_units, default=None, return_dtype=pl.String
+    )
+    return pl.when(spelling.is_null() | (stripped == spelling)).then(lowered)
+
+
+def has_unit_type_mismatch(
+    units: str = "standard_units",
+    type_: str = "standard_type",
+    case_sensitive_units: Mapping[str, str] = CASE_SENSITIVE_UNITS,
+) -> pl.Expr:
+    """`type_` matches `UNIT_TYPE_MISMATCH` of the target `units` convert to, e.g.
+    a zone of inhibition or pKi in mM; not in CAPRICHO."""
+    target = _unit_key(units, case_sensitive_units).replace_strict(
+        _TARGETS, default=None
+    )
+    return pl.any_horizontal(
+        pl.lit(False),
+        *(
+            (target == t) & pl.col(type_).str.contains(pattern)
+            for t, pattern in UNIT_TYPE_MISMATCH.items()
+        ),
+    ).fill_null(False)
+
+
 def convert_units(
     value: str = "standard_value",
     units: str = "standard_units",
+    type_: str = "standard_type",
     case_sensitive_units: Mapping[str, str] = CASE_SENSITIVE_UNITS,
 ) -> dict[str, pl.Expr]:
     """`value` times the factor and `units` set to the target of `UNIT_CONVERSIONS`,
@@ -231,28 +273,24 @@ def convert_units(
     `with_columns(**convert_units())`.
 
     Units match stripped and lowercased, as CAPRICHO, except
-    `case_sensitive_units` (lowercased -> only spelling that matches); `{}` is
-    CAPRICHO's matching, which fits raw ChEMBL `units` (1,367,909 um there are uM).
+    `case_sensitive_units`; `{}` is CAPRICHO's matching, which fits raw ChEMBL
+    `units` (1,367,909 um there are uM). Rows with `has_unit_type_mismatch` are
+    left as they are, unlike CAPRICHO.
 
-    `note_unit_converted` holds the original {`value`, `units`} for every row
-    whose unit is in a table, so also already-target units (factor 1) and null
-    values, which stay unchanged; null otherwise. CAPRICHO comments the same rows.
-    Mistyped units still convert, e.g. ChEMBL's mM zones of inhibition (mm).
+    `note_unit_converted` holds the original {`value`, `units`} for every other
+    row whose unit is in a table, so also already-target units (factor 1) and
+    null values, which stay unchanged; null otherwise. CAPRICHO comments the
+    same rows.
     """
-    stripped = pl.col(units).str.strip_chars()
-    lowered = stripped.str.to_lowercase()
-    spelling = lowered.replace_strict(
-        case_sensitive_units, default=None, return_dtype=pl.String
+    unit = _unit_key(units, case_sensitive_units)
+    factor = pl.when(~has_unit_type_mismatch(units, type_, case_sensitive_units)).then(
+        unit.replace_strict(_FACTORS, default=None, return_dtype=pl.Float64)
     )
-    unit = pl.when(spelling.is_null() | (stripped == spelling)).then(lowered)
-    lookup = {u: t for t, table in UNIT_CONVERSIONS.items() for u in table}
-    factors = {u: f for table in UNIT_CONVERSIONS.values() for u, f in table.items()}
-    factor = unit.replace_strict(factors, default=None, return_dtype=pl.Float64)
     converted = factor.is_not_null() & pl.col(value).is_not_null()
     return {
         value: pl.when(converted).then(pl.col(value) * factor).otherwise(value),
         units: pl.when(converted)
-        .then(unit.replace_strict(lookup, default=None))
+        .then(unit.replace_strict(_TARGETS, default=None))
         .otherwise(units),
         "note_unit_converted": pl.when(factor.is_not_null()).then(
             pl.struct(value, units)

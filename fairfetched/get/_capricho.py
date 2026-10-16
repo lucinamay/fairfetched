@@ -202,7 +202,9 @@ def flag(
     `parallel` uses cpu_count // 2.2 processes); `chirality` and
     `drop_unassigned_chiral` need it. `convert_units` converts `standard_value`
     and `standard_units` (`de.convert_units`, originals in `note_unit_converted`)
-    after every other flag, as CAPRICHO. Values stay float64; CAPRICHO's float32
+    after every other flag, as CAPRICHO, except rows with
+    `drop_unit_type_mismatch` (`de.has_unit_type_mismatch`, not in CAPRICHO,
+    always added). Values stay float64; CAPRICHO's float32
     cast makes it miss unit annotation errors (284 of 6181 ADORA3 rows).
 
     CAPRICHO 1.0.4 (and main at 0ec273e) converts `--value-column`, by default
@@ -259,6 +261,7 @@ def flag(
         drop_missing_year=de.is_missing("year"),
         drop_missing_structure=de.is_missing("canonical_smiles"),
         drop_censored_comment=de.is_censored_by_comment(),
+        drop_unit_type_mismatch=de.has_unit_type_mismatch(),
         note_salt_removed=pl.col("canonical_smiles").str.contains(".", literal=True),
         note_cross_document=de.is_cross_document_duplicate(  # over the rows CAPRICHO keeps
             [

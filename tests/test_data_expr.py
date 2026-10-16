@@ -427,10 +427,38 @@ UNIT_REFERENCE = (
 class TestConvertUnits:
     @staticmethod
     def _convert(rows: list[tuple]) -> pl.DataFrame:
+        """`rows` of (value, units) or (value, units, type)."""
+        schema = ["standard_value", "standard_units", "standard_type"]
         df = pl.DataFrame(
-            rows, schema=["standard_value", "standard_units"], orient="row"
+            [(*r, None)[:3] for r in rows],
+            schema={
+                "standard_value": pl.Float64,
+                **dict.fromkeys(schema[1:], pl.String),
+            },
+            orient="row",
         )
-        return df.with_columns(**de.convert_units())
+        return df.with_columns(
+            **de.convert_units(), mismatch=de.has_unit_type_mismatch()
+        )
+
+    def test_type_mismatch(self):
+        """Lengths and log values in molar units, log values in cm/s; pKi-like
+        names only for molar units (pBBB is a permeability)."""
+        rows = [
+            (12.0, "mM", "Zone of inhibition"),
+            (7.5, "M", "pKi"),
+            (-4.3, "cm/s", "log Pe"),
+            (1.0, "mM", "Potency"),
+            (8.0, "10'-6 cm/s", "pBBB"),
+            (3.0, "mg kg-1", "Paw swelling"),
+        ]
+        out = self._convert(rows)
+        assert out["mismatch"].to_list() == [True, True, True, False, False, False]
+        assert out["standard_value"].to_list() == pytest.approx(
+            [12.0, 7.5, -4.3, 1e6, 8.0, 3.0]
+        )
+        assert out["standard_units"].to_list()[:3] == ["mM", "M", "cm/s"]
+        assert out["note_unit_converted"].is_null().to_list()[:3] == [True] * 3
 
     def test_factors(self):
         """1 uM = 1000 nM, 1 ng/ml = 0.001 ug/mL, 90 min = 1.5 hr, 1 cm/s = 1e6 x
@@ -507,7 +535,9 @@ class TestConvertUnits:
             & ~respelled,
         )
         ours = theirs.select(
-            standard_value="value_in", standard_units="units_in"
+            standard_value="value_in",
+            standard_units="units_in",
+            standard_type=pl.lit(None, pl.String),
         ).with_columns(**de.convert_units())
         assert respelled.sum() == 10  # 5 spellings, value 1.0 and null
         assert ours["standard_units"].equals(theirs["standard_units"])
@@ -517,7 +547,9 @@ class TestConvertUnits:
     def test_case_insensitive_is_capricho(self):
         theirs = pl.read_parquet(UNIT_REFERENCE)
         ours = theirs.select(
-            standard_value="value_in", standard_units="units_in"
+            standard_value="value_in",
+            standard_units="units_in",
+            standard_type=pl.lit(None, pl.String),
         ).with_columns(**de.convert_units(case_sensitive_units={}))
         assert ours["standard_units"].equals(theirs["standard_units"])
         assert ours["standard_value"].equals(theirs["standard_value"])

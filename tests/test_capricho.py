@@ -182,6 +182,14 @@ class TestConvertUnits:
     def test_off_by_default(self):
         out = _capricho.flag(_bioactivity([{}])).collect_schema().names()
         assert "note_unit_converted" not in out
+        assert "drop_unit_type_mismatch" in out
+
+    def test_type_mismatch_not_converted(self):
+        rows = [{"standard_value": 12.0, "standard_units": "mM", "standard_type": "IZ"}]
+        out = _capricho.flag(_bioactivity(rows), convert_units=True).collect()
+        assert out["drop_unit_type_mismatch"].to_list() == [True]
+        assert out["standard_value"].to_list() == [12.0]
+        assert out["note_unit_converted"].to_list() == [None]
 
 
 class TestCrossDocument:

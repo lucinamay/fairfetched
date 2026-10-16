@@ -1,7 +1,8 @@
 """ChEMBL 36 `standard_units` whose lowercased spelling is a key of
-`de.UNIT_CONVERSIONS`: the counts behind `de.CASE_SENSITIVE_UNITS` and the
-`convert_units` docstring. Rows with a `standard_value`; which quantity a
-spelling stands for was judged from `standard_type` and `description_assay`.
+`de.UNIT_CONVERSIONS`: the counts behind `de.CASE_SENSITIVE_UNITS`,
+`de.UNIT_TYPE_MISMATCH` and the `convert_units` docstring. Rows with a
+`standard_value`; which quantity a spelling stands for was judged from
+`standard_type` and `description_assay`.
 
     uv run python dev/unit_case_collisions.py
 """
@@ -11,12 +12,7 @@ import polars as pl
 from fairfetched.get import Chembl
 from fairfetched.prep import data_expr as de
 
-KEYS = [k for table in de.UNIT_CONVERSIONS.values() for k in table]
 RESPELLED = ["mm", "um", "nm", "m", "nM/s", "nM s-1", "10'-8M/s"]  # SI spelling differs
-LENGTH_TYPES = (
-    r"(?i)\bIZ\b|zone|diameter|swelling|absorbance|wavelength|size|length|lambda"
-    r"|OD\b|thickness|ulcer"
-)
 
 
 def converting_spellings(b: pl.LazyFrame) -> pl.DataFrame:
@@ -50,15 +46,31 @@ def respelled_by_type(b: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
-def lengths_in_molar_units(b: pl.LazyFrame) -> pl.DataFrame:
-    """Length-like types in molar `standard_units`, converted under either rule."""
+def types_per_target(b: pl.LazyFrame) -> pl.DataFrame:
+    """Types per conversion target with their median converted value: the search
+    for `de.UNIT_TYPE_MISMATCH` candidates in every table."""
     return (
-        b.filter(
-            pl.col("standard_units").is_in(["nM", "uM", "mM", "M", "pM"]),
-            pl.col("standard_type").str.contains(LENGTH_TYPES),
-        )
+        b.with_columns(**de.convert_units())
+        .filter(pl.col("note_unit_converted").is_not_null())
         .group_by("standard_units", "standard_type")
-        .agg(n=pl.len())
+        .agg(n=pl.len(), median=pl.col("standard_value").median())
+        .sort("standard_units", "n", descending=[False, True])
+        .collect()
+    )
+
+
+def type_mismatches(b: pl.LazyFrame) -> pl.DataFrame:
+    """Rows `de.has_unit_type_mismatch` flags, per unit, with the matched types
+    and the share of values within [-15, 15] (log scale)."""
+    v = pl.col("standard_value")
+    return (
+        b.filter(de.has_unit_type_mismatch())
+        .group_by("standard_units")
+        .agg(
+            n=pl.len(),
+            in_log_range=v.is_between(-15, 15).mean(),
+            types=pl.col("standard_type").value_counts(sort=True).head(8),
+        )
         .sort("n", descending=True)
         .collect()
     )
@@ -83,5 +95,6 @@ if __name__ == "__main__":
     with pl.Config(tbl_rows=-1, fmt_str_lengths=120, tbl_width_chars=250):
         print(converting_spellings(b))
         print(respelled_by_type(b))
-        print(lengths_in_molar_units(b))
+        print(types_per_target(b))
+        print(type_mismatches(b))
         print(raw_um(b))
