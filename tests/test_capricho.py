@@ -2,7 +2,6 @@
 hand-built frames. Expected values come from plain Python over the rows; the
 flag logic itself is tested in `test_data_expr.py`."""
 
-import logging
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -271,21 +270,19 @@ class TestAssaySize:
         assert out["assay_size"].to_list() == [3]
         assert out["drop_assay_size"].to_list() == [False]
 
-    def test_frame_counts_given_rows_and_warns_on_auto(self, caplog):
+    def test_frame_counts_given_rows(self):
         rows = [{"assay_id": 1, "molregno": m} for m in (1, 2, 2)] + [
             {"assay_id": 2, "molregno": 3}
         ]
-        with caplog.at_level(logging.WARNING):
-            out = capricho.flag(_bioactivity(rows), max_assay_size=1).collect()
-        assert "given rows only" in caplog.text
+        out = capricho.flag(
+            _bioactivity(rows), max_assay_size=1, assay_size_source="frame"
+        ).collect()
         assert out["assay_size"].to_list() == [2, 2, 2, 1]
         assert out["drop_assay_size"].to_list() == [True, True, True, False]
 
     def test_database_without_activities_raises(self):
         with pytest.raises(ValueError, match="needs `activities`"):
-            capricho.flag(
-                _bioactivity([{}]), min_assay_size=1, assay_size_source="database"
-            )
+            capricho.flag(_bioactivity([{}]), min_assay_size=1)
 
 
 class TestOverlapSkipsSizeFlaggedAssays:
@@ -533,10 +530,6 @@ class TestCache:
         ).collect()
         assert cached.equals(direct)
 
-    def test_duckdb_engine_not_implemented(self, bioactivity):
-        with pytest.raises(NotImplementedError, match="duckdb"):
-            capricho.flag(bioactivity, engine="duckdb")
-
 
 REFERENCE = Path(__file__).parent / "reference/capricho/1.0.4"
 FETCHED = (  # CAPRICHO's SQL WHERE
@@ -561,7 +554,7 @@ CAPRICHO_COMMENTS = {
     "note_cross_document": "pChEMBL Duplication Across Documents",
     "note_pchembl_calculated": "Calculated pChEMBL",
     "drop_incompatible_units": "Incompatible units for pChEMBL",
-    "note_salt_removed": "Salt/solvent removed",
+    "note_multi_fragment": "Salt/solvent removed",
     "note_stereo_removed": "Stereochemistry removed",
 }
 
@@ -634,7 +627,7 @@ CASES = {  # reference name -> `_ours` arguments, flags in neither reference fil
             "note_cross_document",
             "note_pchembl_calculated",
             "drop_incompatible_units",
-            "note_salt_removed",
+            "note_multi_fragment",
         ),
         "divergences": {
             "drop_unit_annotation_error": "CAPRICHO casts pchembl_value and "
@@ -688,7 +681,7 @@ CASES = {  # reference name -> `_ours` arguments, flags in neither reference fil
             "note_cross_document",
             "note_pchembl_calculated",
             "drop_incompatible_units",
-            "note_salt_removed",
+            "note_multi_fragment",
             "note_stereo_removed",
         ),
         "divergences": {},
@@ -712,7 +705,7 @@ CASES = {  # reference name -> `_ours` arguments, flags in neither reference fil
             "note_cross_document",
             "note_pchembl_calculated",
             "drop_incompatible_units",
-            "note_salt_removed",
+            "note_multi_fragment",
         ),
         "divergences": {},
     },

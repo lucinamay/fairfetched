@@ -476,10 +476,12 @@ def flag_low_assay_overlap(
 
 __all__ = [
     "assay_size",
+    "convert_units",
     "flag_low_assay_overlap",
     "flag_unit_annotation_errors",
     "fragments_without_salts",
     "has_non_molar_units",
+    "has_unit_type_mismatch",
     "has_validity_comment",
     "is_censored_by_comment",
     "is_cross_document_duplicate",

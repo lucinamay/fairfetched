@@ -22,17 +22,9 @@ CHEMBL_DIR = BASE_DIR / "chembl"
 
 
 def _format_version(version: float | str) -> str:
-    if isinstance(version, int | float):
-        version = str(version)
     if isinstance(version, Sequence) and not isinstance(version, str):
         raise TypeError(f"invalid version type: {type(version)}")
-    if not isinstance(version, str):
-        try:
-            version = str(version)
-        except (TypeError, ValueError) as e:
-            raise TypeError(f"invalid version type: {type(version)}") from e
-
-    version = version.lstrip("0")
+    version = str(version).lstrip("0")
     if "." in version:
         version = version.split(".")[0].zfill(2) + "." + version.split(".")[1]
     # for canonicalize the version number 22.1 and 24.1 and left pad with a zero if needed

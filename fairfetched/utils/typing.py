@@ -48,13 +48,3 @@ class DatasetGetModule(Protocol):
     def build_views(self, parquet_paths: dict[str, Path]) -> dict[str, LazyFrame]:
         """Build comprehensive lazy views through joins and pivots."""
         ...
-
-
-#     "ComposedDict",
-#     {
-#         "bioactivity": pl.LazyFrame,
-#         "compounds": pl.LazyFrame,
-#         "proteins": NotRequired[pl.LazyFrame],
-#     },
-#     total=False,
-# )

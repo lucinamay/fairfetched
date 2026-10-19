@@ -3,14 +3,12 @@ written once to a cache parquet that every view then scans.
 
 Rows are flagged, not dropped; drop with
 `lf.remove(pl.any_horizontal(cs.starts_with("drop_")))`, then `aggregate`.
-
-TODO: unit conversion (CAPRICHO `unit_conversions.py`).
-TODO: engine="duckdb" for the self-join flags, pending `dev/bench_capricho.py`.
 """
 
 import hashlib
+import inspect
 import json
-import logging as lg
+import os
 from collections.abc import Sequence
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -22,10 +20,7 @@ import polars.selectors as cs
 from fairfetched.prep import data_expr as de
 from fairfetched.utils import BASE_DIR
 
-_lg = lg.getLogger(__name__)
-
-Engine = Literal["polars", "duckdb"]
-AssaySizes = Literal["auto", "database", "frame"]
+AssaySizes = Literal["database", "frame"]
 CACHE_DIR = BASE_DIR / "_cache"
 _PARENT = "__parent__"
 
@@ -78,16 +73,8 @@ def _with_assay_size(
     """Add `assay_size` and `drop_assay_size` (outside [`lo`, `hi`], None = open).
 
     "database" counts over all of `activities` (CAPRICHO); "frame" over
-    the rows of `lf`; "auto" takes "database" when `activities` is given, else "frame"
-    with a warning.
+    the rows of `lf`.
     """
-    if source == "auto":
-        source = "database" if activities is not None else "frame"
-        if source == "frame":
-            _lg.warning(
-                "assay_size counted over the given rows only, not the whole assay; "
-                "pass `activities` for CAPRICHO's database-wide count"
-            )
     if source == "database":
         if activities is None:
             raise ValueError("assay_size_source='database' needs `activities`")
@@ -169,7 +156,7 @@ def flag(
     chembl_release: int | None = None,
     min_assay_size: int | None = None,
     max_assay_size: int | None = None,
-    assay_size_source: AssaySizes = "auto",
+    assay_size_source: AssaySizes = "database",
     min_assay_overlap: int = 0,
     strict_mutant_removal: bool = False,
     calculate_pchembl: bool = False,
@@ -180,10 +167,9 @@ def flag(
     drop_unassigned_chiral: bool = False,
     parallel: bool = False,
     convert_units: bool = False,
-    engine: Engine = "polars",
 ) -> pl.LazyFrame:
-    """`bioactivity` (columns of `Chembl.view.bioactivity`) with one pl.Boolean
-    column per CAPRICHO flag.
+    """`bioactivity` (columns of `Chembl.view.bioactivity`) with one column per
+    CAPRICHO flag: pl.Boolean, except the struct `note_unit_converted`.
 
     Defaults are those of the CAPRICHO 1.0.4 `capricho get` options. Selection
     criteria CAPRICHO applies as SQL WHERE (confidence, assay type, relation,
@@ -216,8 +202,6 @@ def flag(
     `pchembl_value`, not `standard_value`: a pChEMBL calculated from 1 uM (6.0)
     becomes 6000.0. Here `pchembl_value` is never converted.
     """
-    if engine != "polars":
-        raise NotImplementedError(f"engine={engine!r}; only 'polars' so far")
     if not mol_flags and (drop_unassigned_chiral or not chirality):
         raise ValueError("chirality=False and drop_unassigned_chiral need mol_flags")
     selection = _selection(
@@ -266,7 +250,7 @@ def flag(
         drop_missing_structure=de.is_missing("canonical_smiles"),
         drop_censored_comment=de.is_censored_by_comment(),
         drop_unit_type_mismatch=de.has_unit_type_mismatch(),
-        note_salt_removed=pl.col("canonical_smiles").str.contains(".", literal=True),
+        note_multi_fragment=pl.col("canonical_smiles").str.contains(".", literal=True),
         note_cross_document=de.is_cross_document_duplicate(  # over the rows CAPRICHO keeps
             [
                 *(k for k in de.DUPLICATE_KEYS if k != "mutation"),
@@ -458,16 +442,21 @@ def aggregate(
 
 
 def cache_path(version: str, params: dict, cache_dir: Path | str | None = None) -> Path:
-    """`<cache_dir>/chembl/<version>/capricho/<hash>.parquet`, hashing `params`
-    and the fairfetched version.
+    """`<cache_dir>/chembl/<version>/capricho/<hash>.parquet`, hashing the
+    fairfetched version and `flag`'s options with defaults filled in and
+    sequences as sorted sets, except `parallel`, which does not change the output.
 
     ponytail: a flag-logic change without a version bump reuses a stale cache;
     delete the folder (or bump the version) after editing `flag`.
     """
-    key = json.dumps(
-        {"params": params, "fairfetched": package_version("fairfetched")},
-        sort_keys=True,
-    )
+    args = inspect.signature(flag).bind(None, None, **params)
+    args.apply_defaults()
+    options = {
+        k: sorted(set(v)) if isinstance(v, Sequence) and not isinstance(v, str) else v
+        for k, v in args.arguments.items()
+        if k not in ("bioactivity", "activities", "parallel")
+    }
+    key = json.dumps([options, package_version("fairfetched")], sort_keys=True)
     digest = hashlib.sha256(key.encode()).hexdigest()[:16]
     root = Path(cache_dir) if cache_dir is not None else CACHE_DIR
     return root / "chembl" / version / "capricho" / f"{digest}.parquet"
@@ -482,11 +471,12 @@ def ensure_flagged(
 ) -> Path:
     """Sink `flag(...)` to `cache_path` unless it exists; return the path.
 
-    Written to a temporary file first, so an interrupted run leaves no cache.
+    Written to `<hash>.<pid>.tmp` and renamed, so an interrupted or concurrent
+    run never leaves a partial cache.
     """
     path = cache_path(version, params, cache_dir)
     if not path.exists():
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
         flag(bioactivity, activities, **params).sink_parquet(tmp, mkdir=True)
         tmp.replace(path)
     return path
