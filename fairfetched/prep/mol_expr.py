@@ -204,6 +204,10 @@ class MolExpr(pl.Expr):
     def standardize(
         self, *steps: MolFn, parallel: bool = False, dedup: bool = False
     ) -> "MolExpr":
+        if not steps:
+            raise ValueError(
+                "standardize() needs at least one step, e.g. *STEPS_CHEMBL"
+            )
         pipeline = MolPipeline(steps=tuple(steps))
         site = self._site
         return MolExpr(

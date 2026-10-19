@@ -803,7 +803,7 @@ wheels = [
 
 [[package]]
 name = "fairfetched"
-version = "0.1.0a20261015"
+version = "0.1.0a20261019"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },

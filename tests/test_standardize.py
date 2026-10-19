@@ -179,6 +179,11 @@ def test_custom_pipe():
     assert out.select(pl.col("mol").is_not_null().all()).item()
 
 
+def test_standardize_without_steps_raises():
+    with pytest.raises(ValueError, match="at least one step"):
+        MolExpr.col("mol").standardize()
+
+
 class TestCaprichoMolFlags:
     """Expected values follow from the structures; CAPRICHO's own functions
     are compared when the `capricho` group is installed."""
