@@ -224,13 +224,10 @@ def is_not_in(col: str, values: Sequence) -> pl.Expr:
 
 
 def pchembl(value: str = "standard_value", units: str = "standard_units") -> pl.Expr:
-    """-log10(`value` in M), unrounded, as CAPRICHO `convert_to_log10` (pl.Float64);
-    null for `value` <= 0 and for null or non-molar `units`.
-
-    Float64 as ChEMBL's SQLite stores it; CAPRICHO casts to float32 (~1e-7 off).
-    The unit's exponent is subtracted exactly, so 1 nM gives 9.0 as in ChEMBL;
-    -log10(1 * 1e-9) gives 8.999999999999998 in float64.
-    """
+    """-log10(`value` in M) as pl.Float64, unrounded, as CAPRICHO `convert_to_log10`
+    (which casts to float32, ~1e-7 off); null for `value` <= 0 and null or
+    non-molar `units`. The exponent is subtracted exactly, so 1 nM gives 9.0 as in
+    ChEMBL, not 8.999999999999998."""
     exponent = pl.col(units).replace_strict(
         MOLAR_EXPONENT, default=None, return_dtype=pl.Float64
     )
@@ -271,18 +268,13 @@ def convert_units(
     case_sensitive_units: Mapping[str, str] = CASE_SENSITIVE_UNITS,
 ) -> dict[str, pl.Expr]:
     """`value` times the factor and `units` set to the target of `UNIT_CONVERSIONS`,
-    as CAPRICHO's five `convert_*_units` with `flag_unit_conversion`, for
-    `with_columns(**convert_units())`.
+    as CAPRICHO's `convert_*_units`, for `with_columns(**convert_units())`.
 
-    Units match stripped and lowercased, as CAPRICHO, except
-    `case_sensitive_units`; `{}` is CAPRICHO's matching, which fits raw ChEMBL
-    `units` (1,367,909 um there are uM). Rows with `has_unit_type_mismatch` are
-    left as they are, unlike CAPRICHO.
-
-    `note_unit_converted` holds the original {`value`, `units`} for every other
-    row whose unit is in a table, so also already-target units (factor 1) and
-    null values, which stay unchanged; null otherwise. CAPRICHO comments the
-    same rows.
+    Units match stripped and lowercased, except `case_sensitive_units` (`{}` for
+    CAPRICHO's matching). Unlike CAPRICHO, rows with `has_unit_type_mismatch` stay
+    unchanged. `note_unit_converted` holds the original {`value`, `units`} of the
+    other rows whose unit is in a table (factor 1 and null values included), the
+    rows CAPRICHO comments; null otherwise.
     """
     unit = _unit_key(units, case_sensitive_units)
     factor = pl.when(~has_unit_type_mismatch(units, type_, case_sensitive_units)).then(
@@ -301,13 +293,10 @@ def convert_units(
 
 
 def fragments_without_salts(smiles: str | pl.Expr = "standard_smiles") -> pl.Expr:
-    """Distinct "."-separated fragments of `smiles` (pl.List(pl.String), sorted); when
-    there are several, those matching `MIXTURE_REGEX` and empty ones are removed,
-    so a salt-only `smiles` gives []. As CAPRICHO `clean_mixtures`, which then
-    calls every result other than one fragment a mixture ("." for []).
-
-    Expects RDKit-canonical SMILES, as `MIXTURE_REGEX` matches text.
-    """
+    """Sorted distinct "."-fragments of `smiles` (pl.List(pl.String)); of several,
+    those matching `MIXTURE_REGEX` and empty ones are removed, so a salt-only
+    `smiles` gives []. As CAPRICHO `clean_mixtures`; expects RDKit-canonical SMILES,
+    as `MIXTURE_REGEX` matches text."""
     expr = pl.col(smiles) if isinstance(smiles, str) else smiles
     frags = expr.str.split(".").list.unique().list.sort()  # np.unique sorts
     salt = pl.element().str.contains(MIXTURE_REGEX) | (pl.element() == "")
@@ -322,11 +311,8 @@ def fragments_without_salts(smiles: str | pl.Expr = "standard_smiles") -> pl.Exp
 
 
 def assay_size(assay: str = "assay_id", mol: str = "molregno") -> pl.Expr:
-    """unique non-null `mol` per `assay`, over the frame's rows (pl.UInt32).
-
-    c.f. CAPRICHO counts over whole assay in ChEMBL.
-    the Chembl preset uses `fairfetched.prep.capricho.assay_sizes` for that.
-    """
+    """Distinct non-null `mol` per `assay` over the frame's rows (pl.UInt32);
+    `capricho.assay_sizes` counts over all of ChEMBL, as CAPRICHO."""
     return pl.col(mol).drop_nulls().n_unique().over(assay)
 
 
@@ -338,14 +324,10 @@ def is_cross_document_duplicate(
     skip: pl.Expr | None = None,
 ) -> pl.Expr:
     """`relation` == "=" and the "=" rows sharing `keys` come from more than one
-    `doc` (null counts as a `doc`). Rows where `skip` is true or a key is null
-    are neither counted nor flagged.
-
-    A note, not a drop: the same value reported in several papers. As CAPRICHO
-    `flag_inter_document_duplication`, whose pandas `groupby` leaves out rows
-    with a null key; its pipeline fills a null `mutation` with "WT" first, so
-    pass `pl.col("mutation").fill_null("WT")` as a key for that.
-    """
+    `doc` (null counts as a `doc`); rows with `skip` or a null key are neither
+    counted nor flagged. A note, not a drop, as CAPRICHO
+    `flag_inter_document_duplication`, which fills a null `mutation` with "WT"
+    first: pass `pl.col("mutation").fill_null("WT")` as a key for that."""
     cols = [pl.col(k) if isinstance(k, str) else k for k in keys]
     null_key = pl.any_horizontal(c.is_null() for c in cols)
     skipped = skip.fill_null(False) if skip is not None else pl.lit(False)
@@ -432,16 +414,14 @@ def flag_low_assay_overlap(
     tol: float = 1e-9,
     name: str = "low_assay_overlap",
 ) -> pl.LazyFrame:
-    """Add `name`: the row's `assay` has no partner assay of the same `target`
-    with >= `min_overlap` row pairs of the same `mol`, from different `doc`s, at
-    different `value`s that are not a unit annotation error.
+    """Add `name`: no partner assay of the same `target` has >= `min_overlap` row
+    pairs of the same `mol` from different `doc`s, at different `value`s that are
+    not a unit annotation error.
 
-    As CAPRICHO `flag_insufficient_assay_overlap`: rows are paired, not molecules
-    (a `mol` measured twice in each assay is 4 pairs), and a null `doc` or `value`
-    counts as different, so a pair without values counts. Rows where `skip` is
-    true (CAPRICHO: size-flagged assays) take no part and are not flagged; a
-    `target` with fewer than 2 assays is not checked. Quadratic in the rows per
-    (`target`, `mol`).
+    As CAPRICHO `flag_insufficient_assay_overlap`, rows are paired (a `mol`
+    measured twice in each assay is 4 pairs) and a null `doc` or `value` counts as
+    different. `skip` rows take no part and are not flagged; a `target` with
+    fewer than 2 assays is not checked. Quadratic in the rows per (`target`, `mol`).
     """
     if min_overlap < 1:
         raise ValueError(f"min_overlap must be >= 1, got {min_overlap}")

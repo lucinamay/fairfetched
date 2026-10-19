@@ -42,11 +42,8 @@ DEPRECATED_VERSION_ALIASES: dict[str, str] = {"05.6": "2022.11.4", "05.7": "2024
 
 
 def canonical_version(version: str) -> str:
-    """Map a deprecated `05.x` alias onto the release name used as the cache directory.
-
-    Keying on `05.7` while the cache directory was named after the release made the package
-    re-download a release it already held, so the two names are reconciled here.
-    """
+    """Release name (the cache directory) for a deprecated `05.x` alias, with a
+    DeprecationWarning, so an alias does not re-download a cached release."""
     v = str(version)
     if v in DEPRECATED_VERSION_ALIASES:
         canonical = DEPRECATED_VERSION_ALIASES[v]

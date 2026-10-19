@@ -1,8 +1,5 @@
-"""CAPRICHO preset for ChEMBL: flags `drop_*` / `note_*` on the bioactivity view,
-written once to a cache parquet that every view then scans.
-
-Rows are flagged, not dropped; drop with
-`lf.remove(pl.any_horizontal(cs.starts_with("drop_")))`, then `aggregate`.
+"""CAPRICHO 1.0.4 for ChEMBL: `flag` adds `drop_*` / `note_*` columns, `aggregate`
+collapses the rows left after `lf.remove(pl.any_horizontal(cs.starts_with("drop_")))`.
 """
 
 import hashlib
@@ -26,8 +23,7 @@ _PARENT = "__parent__"
 
 
 def assay_sizes(activities: pl.LazyFrame) -> pl.LazyFrame:
-    """`assay_id`, `assay_size`: distinct `molregno` per assay over all of
-    `activities`, as CAPRICHO `get_assay_size_sql`."""
+    """`assay_id`, `assay_size` (distinct `molregno`), as CAPRICHO `get_assay_size_sql`."""
     return activities.group_by("assay_id").agg(
         assay_size=pl.col("molregno").drop_nulls().n_unique()
     )
@@ -41,8 +37,7 @@ def _selection(
     standard_types: Sequence[str] | None,
     chembl_release: int | None,
 ) -> dict[str, pl.Expr]:
-    """The criteria CAPRICHO applies as SQL WHERE; None means no criterion.
-    `drop_missing_standard_value` is always applied, as in CAPRICHO."""
+    """CAPRICHO's SQL WHERE criteria as `drop_*` flags; None skips one."""
     criteria = {
         "drop_confidence": ("confidence_score", confidence_scores),
         "drop_assay_type": ("assay_type", assay_types),
@@ -70,11 +65,8 @@ def _with_assay_size(
     lo: int | None,
     hi: int | None,
 ) -> pl.LazyFrame:
-    """Add `assay_size` and `drop_assay_size` (outside [`lo`, `hi`], None = open).
-
-    "database" counts over all of `activities` (CAPRICHO); "frame" over
-    the rows of `lf`.
-    """
+    """Add `assay_size` and `drop_assay_size` (outside [`lo`, `hi`], None = open),
+    counted over all of `activities` ("database", CAPRICHO) or the rows of `lf`."""
     if source == "database":
         if activities is None:
             raise ValueError("assay_size_source='database' needs `activities`")
@@ -86,10 +78,10 @@ def _with_assay_size(
         )
     else:
         lf = lf.with_columns(assay_size=de.assay_size())
-    size = pl.col("assay_size")
-    too_small = size < lo if lo is not None else pl.lit(False)
-    too_large = size > hi if hi is not None else pl.lit(False)
-    return lf.with_columns(drop_assay_size=(too_small | too_large).fill_null(False))
+    inside = pl.col("assay_size").is_between(
+        lo or 0, float("inf") if hi is None else hi
+    )
+    return lf.with_columns(drop_assay_size=~inside.fill_null(True))
 
 
 def _with_mol_flags(
@@ -168,39 +160,31 @@ def flag(
     parallel: bool = False,
     convert_units: bool = False,
 ) -> pl.LazyFrame:
-    """`bioactivity` (columns of `Chembl.view.bioactivity`) with one column per
-    CAPRICHO flag: pl.Boolean, except the struct `note_unit_converted`.
+    """`bioactivity` (`Chembl.view.bioactivity` columns) with one column per
+    CAPRICHO 1.0.4 flag (pl.Boolean; `note_unit_converted` a struct); defaults
+    are those of `capricho get`.
 
-    Defaults are those of the CAPRICHO 1.0.4 `capricho get` options. Selection
-    criteria CAPRICHO applies as SQL WHERE (confidence, assay type, relation,
-    units, standard type, release) become `drop_*` flags, so excluded rows stay
-    inspectable; rows they flag take no part in the self-join flags, as
-    CAPRICHO never fetches them. `activities` (unfiltered, e.g.
-    `chembl.lfs["activities"]`) gives database-wide assay sizes, as CAPRICHO's
-    separate count; the other self-join flags (cross-document duplicates, unit
-    annotation errors, assay overlap) compare only the rows of `bioactivity`, as
-    CAPRICHO compares only the rows it fetches by target, molecule, document or
-    assay ID. A `bioactivity` filtered on other columns can therefore flag
-    differently than its whole targets. `calculate_pchembl` fills a null `pchembl_value` from
-    `standard_value` (`de.pchembl`); as CAPRICHO, `note_pchembl_calculated` marks
-    every attempt (also those giving null) and `drop_incompatible_units` the null
-    values in other units. `require_doc_date` makes rows without a year
-    (`drop_missing_year`) take no part in the cross-document and overlap flags,
-    as CAPRICHO removes them before those. `curate_annotation_errors` adds
-    `drop_unit_annotation_error`. `mol_flags` standardizes every distinct
-    structure with RDKit into `standard_smiles`, which `aggregate` needs
-    (`_with_mol_flags`; ~4 ms each, ~3 h for all of ChEMBL on one process;
-    `parallel` uses cpu_count // 2.2 processes); `chirality` and
-    `drop_unassigned_chiral` need it. `convert_units` converts `standard_value`
-    and `standard_units` (`de.convert_units`, originals in `note_unit_converted`)
-    after every other flag, as CAPRICHO, except rows with
-    `drop_unit_type_mismatch` (`de.has_unit_type_mismatch`, not in CAPRICHO,
-    always added). Values stay float64; CAPRICHO's float32
-    cast makes it miss unit annotation errors (284 of 6181 ADORA3 rows).
+    CAPRICHO's SQL WHERE criteria become `drop_*` flags, and rows they flag take
+    no part in the self-join flags (cross-document duplicates, unit annotation
+    errors, assay overlap). Those compare only the rows of `bioactivity`, as
+    CAPRICHO compares the rows it fetches by target, molecule, document or assay,
+    so filtering on other columns changes them. Assay sizes count over
+    `activities` (unfiltered `chembl.lfs["activities"]`).
 
-    CAPRICHO 1.0.4 (and main at 0ec273e) converts `--value-column`, by default
-    `pchembl_value`, not `standard_value`: a pChEMBL calculated from 1 uM (6.0)
-    becomes 6000.0. Here `pchembl_value` is never converted.
+    - `calculate_pchembl`: fill a null `pchembl_value` from `standard_value`
+      (`de.pchembl`); `note_pchembl_calculated` marks every attempt,
+      `drop_incompatible_units` the non-molar ones.
+    - `require_doc_date`: rows without `year` take no part in the cross-document
+      and overlap flags.
+    - `mol_flags`: standardize every distinct structure into `standard_smiles`
+      (`_with_mol_flags`, ~3 h for all of ChEMBL on one process); `aggregate`,
+      `chirality=False` and `drop_unassigned_chiral` need it.
+    - `convert_units`: convert `standard_value` and `standard_units` last
+      (`de.convert_units`), except rows with `drop_unit_type_mismatch`.
+
+    Unlike CAPRICHO, values stay float64 (its float32 cast misses 284 of 6181
+    ADORA3 unit annotation errors), and `pchembl_value` is never unit-converted
+    (CAPRICHO 1.0.4 turns a calculated 6.0 into 6000.0).
     """
     if not mol_flags and (drop_unassigned_chiral or not chirality):
         raise ValueError("chirality=False and drop_unassigned_chiral need mol_flags")
@@ -284,29 +268,12 @@ def flag(
 
 CompoundEquality = Literal["inchikey", "inchi", "connectivity", "smiles"]
 MULTIVAL = (  # CAPRICHO `multiple_value_cols` and `include_metadata`, view names
-    "standard_smiles",
-    "canonical_smiles",
-    "standard_value",
-    "standard_units",
-    "assay_chembl_id",
-    "description_assay",
-    "activity_id",
-    "assay_type",
-    "standard_type",
-    "confidence_score",
-    "organism_tgt",
-    "molecule_chembl_id",
-    "document_chembl_id",
-    "assay_tissue",
-    "assay_cell_type",
-    "relationship_type",
-    "doc_type",
-    "doi",
-    "journal",
-    "year",
-    "chembl_release_id",
-    "activity_comment",
-)
+    "standard_smiles", "canonical_smiles", "standard_value", "standard_units",
+    "assay_chembl_id", "description_assay", "activity_id", "assay_type",
+    "standard_type", "confidence_score", "organism_tgt", "molecule_chembl_id",
+    "document_chembl_id", "assay_tissue", "assay_cell_type", "relationship_type",
+    "doc_type", "doi", "journal", "year", "chembl_release_id", "activity_comment",
+)  # fmt: skip
 _KEY = "__key__"
 
 
@@ -324,10 +291,9 @@ def _identifier(smiles: str, equality: CompoundEquality, parallel: bool) -> pl.E
 
 
 def _stats(value: str) -> dict[str, pl.Expr]:
-    """`<value>_mean`, `_std`, `_median`, `_counts` per group, as CAPRICHO
-    `assign_stats`: geometric mean and std (scipy `gmean`, `gstd`) of the
-    pChEMBL values themselves, arithmetic otherwise; censored and single-row
-    groups take the first value."""
+    """`<value>_mean`, `_std`, `_median`, `_counts`, as CAPRICHO `assign_stats`:
+    geometric for pChEMBL, else arithmetic; censored or single-row groups take
+    the first value."""
     v = pl.col(value)
     if value == "pchembl_value":
         mean, std = v.log().mean().exp(), v.log().std().exp()
@@ -356,24 +322,17 @@ def aggregate(
 ) -> pl.LazyFrame:
     """One row per compound, `target_chembl_id`, `standard_relation` (null as
     "="), `mutation` (null as "WT"; unless `aggregate_mutants`) and
-    `extra_id_cols`, as
-    CAPRICHO 1.0.4 `aggregate_data`. Needs `standard_smiles`
-    (`flag(mol_flags=True)`); aggregates every row given, so drop flagged rows
-    first.
+    `extra_id_cols`, as CAPRICHO 1.0.4 `aggregate_data`. Needs `standard_smiles`
+    (`flag(mol_flags=True)`) and aggregates every row, so drop flagged rows first.
 
-    Compounds are equal by `compound_equality` of `standard_smiles`, with stereo
-    removed first unless `chirality` (always for "connectivity"); censored rows
-    (relation not "=") only join rows with the same relation and `value`
-    (rounded to 2 decimals for pChEMBL, else 4). `MULTIVAL`, `value`, the
-    `drop_*` / `note_*` flags and `extra_multival_cols` become lists in row
-    order, `standard_smiles` as `processed_smiles`; `smiles` is its first entry,
-    canonicalized again.
-    Adds `_stats(value)`, `connectivity` (and `inchikey` / `inchi` when that is
-    the equality), `shared_identifier_group` (rows sharing identifier and target
-    but split by mutation or `extra_id_cols`; dense from 1, else null) and, when
-    stereo is removed, `might_be_racemic` (the compound has more than one row).
-
-    Stats run on the float values; CAPRICHO first rounds them to 2 decimals.
+    Compounds are equal by `compound_equality` of `standard_smiles` (stereo
+    removed unless `chirality`; always for "connectivity"); censored rows only
+    join rows with the same relation and rounded `value`. `MULTIVAL`, the flags
+    and `extra_multival_cols` become lists; `standard_smiles` becomes
+    `processed_smiles`, and `smiles` is its first entry recanonicalized. Adds
+    `_stats(value)`, `connectivity`, `shared_identifier_group` (same identifier
+    and target, split by mutation or `extra_id_cols`) and, without stereo,
+    `might_be_racemic`. Unlike CAPRICHO, stats use unrounded values.
     """
     from fairfetched.prep.mol_expr import MolExpr
 
@@ -442,12 +401,11 @@ def aggregate(
 
 
 def cache_path(version: str, params: dict, cache_dir: Path | str | None = None) -> Path:
-    """`<cache_dir>/chembl/<version>/capricho/<hash>.parquet`, hashing the
-    fairfetched version and `flag`'s options with defaults filled in and
-    sequences as sorted sets, except `parallel`, which does not change the output.
+    """`<cache_dir>/chembl/<version>/capricho/<hash>.parquet`; the hash covers the
+    fairfetched version and `flag`'s options (defaults filled, sequences as
+    sorted sets, `parallel` left out).
 
-    ponytail: a flag-logic change without a version bump reuses a stale cache;
-    delete the folder (or bump the version) after editing `flag`.
+    ponytail: editing `flag` without a version bump reuses a stale cache.
     """
     args = inspect.signature(flag).bind(None, None, **params)
     args.apply_defaults()
@@ -469,11 +427,8 @@ def ensure_flagged(
     cache_dir: Path | str | None = None,
     **params,
 ) -> Path:
-    """Sink `flag(...)` to `cache_path` unless it exists; return the path.
-
-    Written to `<hash>.<pid>.tmp` and renamed, so an interrupted or concurrent
-    run never leaves a partial cache.
-    """
+    """Sink `flag(...)` to `cache_path` unless it exists, via a renamed
+    `<hash>.<pid>.tmp` so no run leaves a partial cache; return the path."""
     path = cache_path(version, params, cache_dir)
     if not path.exists():
         tmp = path.with_suffix(f".{os.getpid()}.tmp")

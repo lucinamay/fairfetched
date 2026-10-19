@@ -63,9 +63,8 @@ class _ChemblView(_View):
         return self._views["components"]
 
     def capricho(self, cache_dir: Path | str | None = None, **params) -> LazyFrame:
-        """`bioactivity` with CAPRICHO `drop_*` / `note_*` flags, scanned from a
-        cache parquet written on first call (see `fairfetched.prep.capricho.flag`
-        for `params`; default `cache_dir` is `BASE_DIR/_cache`)."""
+        """`capricho.flag(bioactivity, activities, **params)`, scanned from a parquet
+        cached under `cache_dir` (default `BASE_DIR/_cache`) on first call."""
         path = capricho.ensure_flagged(
             self.bioactivity,
             self._owner.lfs["activities"],

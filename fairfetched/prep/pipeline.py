@@ -253,11 +253,10 @@ def papyrus_canonical_tautomer(
 
 @safe_step
 def chemfilters_chembl(mol: Mol) -> Mol | None:
-    """chemFilters `ChemStandardizer(method="chembl")`, CAPRICHO 1.0.4's
-    structure step: `get_parent_mol` (neutralize, check_exclusion; an excluded
-    parent keeps its salts) and then `standardize_mol` (check_exclusion), the
-    reverse of `STEPS_CHEMBL_PARENT`. A valence or type error in
-    `get_parent_mol` skips it; one in `standardize_mol` gives None."""
+    """chemFilters `ChemStandardizer(method="chembl")`, CAPRICHO 1.0.4's structure
+    step: `get_parent_mol` (an excluded parent keeps its salts), then
+    `standardize_mol`, the reverse order of `STEPS_CHEMBL_PARENT`. A valence or
+    type error skips `get_parent_mol`; one in `standardize_mol` gives None."""
     try:
         parent = chembl_get_parent_mol(mol, neutralize=True, check_exclusion=True)[0]
     except (Chem.rdchem.AtomValenceException, TypeError):

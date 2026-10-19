@@ -113,30 +113,19 @@ def holdout(
     n_jobs: int = 1,
     **params,
 ) -> pl.Expr:
-    """Partition per row, "train" / "valid" / "test" (`Partition` enum); null for
-    records the splitter discards.
+    """Partition per row ("train" / "valid" / "test", `Partition`) from a
+    single-split `chemsplit` splitter (`splitters()` lists them); null for records
+    the splitter discards. Call at frame level, as `kfold`.
 
-    Wraps a single-split `chemsplit` splitter (extra: ``fairfetched[split]``);
-    `splitters()` lists them, the chemsplit README maps deployment scenarios to ids.
+    X: a SMILES, pl.Array descriptor or (compound, target) pair of columns,
+        already standardized. Split on its distinct values, so `train_size` etc.
+        count compounds (pairs) and all rows of one compound share a partition.
+    y, dates, groups: labels, a pl.Date column, or group ids (`cluster()`,
+        `groups()`), for splitters that need them.
+    params: splitter parameters, e.g. `train_size`, `test_size`, `cutoff`.
 
-    X: the records: a SMILES column, a pl.Array descriptor column, or a
-        (compound, target) pair of columns for the cold-start splitters.
-        Structures must already be standardized. Splitting runs on the distinct
-        `X`, so `train_size` etc. count compounds (pairs), not rows, and every
-        row of one compound lands in the same partition.
-    y: labels, for splitters with `requires_labels`.
-    dates: pl.Date column, for "temporal" and other `requires_dates` splitters.
-    groups: precomputed group id, e.g. from `cluster()` or `groups()`, for
-        splitters that consume groups ("predefined", "group_k_fold" with
-        `n_splits=1` is not a holdout).
-    params: splitter parameters, e.g. `train_size`, `test_size`, `valid_size`,
-        `cutoff`.
-
-    Raises on null `X`, when `y` / `dates` / `groups` vary within one `X`
-    (aggregate per compound first), and when the splitter yields more than one
-    split ("monte_carlo", "repeated", "k_fold": use `kfold` for folds).
-
-    Call at frame level, as `kfold`.
+    Raises on null `X`, when `y` / `dates` / `groups` vary within one `X`, and
+    when the splitter yields several splits (use `kfold` for folds).
 
     >>> df = df.with_columns(
     ...     split=holdout("canonical_smiles", splitter="temporal", dates="date",
@@ -156,12 +145,9 @@ def holdout(
 
 
 def splitters() -> pl.DataFrame:
-    """The chemsplit registry: `id`, `family`, `strictness`, `group_forming`,
-    `requires_labels`, `requires_dates`, ... one row per splitter.
-
-    `group_forming` ids go to `groups()`; the rest to `holdout()`. The chemsplit
-    README's "24 deployment scenarios" says which id answers which question.
-    """
+    """The chemsplit registry, one row per splitter (`id`, `family`, `strictness`,
+    `group_forming`, `requires_labels`, `requires_dates`, ...); `group_forming`
+    ids go to `groups()`, the rest to `holdout()`."""
     from chemsplit import list_splitters
 
     return pl.from_pandas(list_splitters())
@@ -199,11 +185,8 @@ def _records(s: pl.Series) -> list | object:
 
 
 def _unique_apply(s: pl.Series, fn: Callable[[pl.DataFrame], pl.Series]) -> pl.Series:
-    """`map_batches` helper: struct{X, ...} -> `fn` on the distinct rows, mapped
-    back onto every row.
-
-    Raises on null `X` and when another field varies within one `X`.
-    """
+    """`fn` on the distinct rows of struct{X, ...}, mapped back to every row;
+    raises on null `X` or another field varying within one `X`."""
     df = s.struct.unnest()
     if df.get_column(_X).null_count():
         raise ValueError("`X` contains nulls")

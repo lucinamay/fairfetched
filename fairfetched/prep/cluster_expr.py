@@ -72,22 +72,18 @@ def groups(
     n_jobs: int = 1,
     **params,
 ) -> pl.Expr:
-    """Group id per row (pl.Int32, dense 0..g-1), from a group-forming
-    `chemsplit` splitter (extra: ``fairfetched[split]``): "murcko_scaffold",
-    "generic_scaffold", "scaffold_tree", "butina", "sphere_exclusion", ...;
-    `split_expr.splitters()` lists them (`group_forming`).
+    """Group id per row (pl.Int32, 0..g-1) from a group-forming `chemsplit`
+    splitter, e.g. "murcko_scaffold" or "butina" (`split_expr.splitters()` lists
+    them); feeds `kfold(groups=...)` or `holdout(groups=...)`, like `cluster()`.
 
-    X: a SMILES column, a pl.Array descriptor column, or a (compound, target)
-        pair of columns; structures must already be standardized. Groups are
-        formed on the distinct `X` (one RDKit parse per compound) and mapped
-        back, so equal structures share a group.
+    X: a SMILES, pl.Array descriptor or (compound, target) pair of columns,
+        already standardized; grouped on its distinct values, so equal
+        structures share a group.
     params: splitter parameters, e.g. `cutoff` for "butina".
 
-    Output feeds `kfold(groups=...)` or `holdout(groups=...)`, like `cluster()`.
-    Dataset-independent scaffold ids are `MolExpr.scaffold_cluster` instead.
-
-    Raises on null `X`. Similarity splitters build pairwise distances and raise
-    chemsplit's `ScalabilityError` above their limits.
+    Raises on null `X`, and chemsplit's `ScalabilityError` when a similarity
+    splitter exceeds its size limit. Dataset-independent scaffold ids are
+    `MolExpr.scaffold_cluster`.
 
     >>> df = df.with_columns(scaffold=groups("canonical_smiles", splitter="murcko_scaffold"))  # doctest: +SKIP
     """
