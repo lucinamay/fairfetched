@@ -22,8 +22,10 @@ standardise = [
     # papyrus-structure-pipeline is copied into prep/papyrus.py; dev tests against it
 ]
 split = [
-    "nanoom>=0.1.0a20260815", # fold assignment in prep.split_expr
+    "nanoom[chem]>=0.1.0a20260815", # fold assignment in prep.split_expr
+    "chemsplit>=0.1.2",
     "pulp<4", # nanoom 0.1.0a20260815 calls LpVariable(lowBound=...), removed in pulp 4
+    "pyarrow>=25.0.1", # pl.from_pandas of chemsplit's registry in split_expr.splitters
 ]
 rough = ["scipy>=1.6"] # distances + clustering in prep.rough_expr; 1.6 adds integrate.trapezoid
 dev = [
@@ -81,6 +83,7 @@ dev = [
     "rust-just>=1.46.0",
     "ruff>=0.16.10",
     "pyright>=1.1.414",
+    "marimo>=0.25.1",
 ]
 
 

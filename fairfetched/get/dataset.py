@@ -4,7 +4,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Self
 
-from polars import LazyFrame
+from polars import LazyFrame, scan_parquet
 
 from fairfetched.get import (
     _demo,
@@ -29,6 +29,7 @@ from fairfetched.get._table_autocomplete import (
     SiderTables,
     ToxcastTables,
 )
+from fairfetched.prep import capricho
 from fairfetched.utils import BASE_DIR
 from fairfetched.utils.typing import DatasetGetModule
 
@@ -37,6 +38,7 @@ class _View:
     """Joined domain views, built once from the raw tables."""
 
     def __init__(self, owner: "_Base") -> None:
+        self._owner = owner
         self._views = owner.module.build_views(owner.parquet_paths)
 
     def __repr__(self) -> str:
@@ -60,11 +62,17 @@ class _ChemblView(_View):
     def components(self) -> LazyFrame:
         return self._views["components"]
 
-    def capricho(self, **params) -> LazyFrame:
-        """`bioactivity` with CAPRICHO `drop_*` / `note_*` flags, scanned from a
-        cache parquet written on first call (see `fairfetched.get._capricho.flag`
-        for `params`)."""
-        raise NotImplementedError
+    def capricho(self, cache_dir: Path | str | None = None, **params) -> LazyFrame:
+        """`capricho.flag(bioactivity, activities, **params)`, scanned from a parquet
+        cached under `cache_dir` (default `BASE_DIR/_cache`) on first call."""
+        path = capricho.ensure_flagged(
+            self.bioactivity,
+            self._owner.lfs["activities"],
+            self._owner.version,
+            cache_dir,
+            **params,
+        )
+        return scan_parquet(path)
 
 
 class _PapyrusView(_View):
@@ -402,7 +410,7 @@ class Chembl(_Base):
 class Papyrus(_Base):
     """Papyrus wrapper: download once, then read lazily.
 
-    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("05.7")``) downloads a
+    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("2024.09.2")``) downloads a
     real release. ``Papyrus.demo()`` returns a tiny offline sample with the same
     API, used by the examples here:
 
@@ -434,7 +442,7 @@ class Papyrus(_Base):
 
     @classmethod
     def demo(cls) -> "Papyrus":
-        """Tiny offline slice of Papyrus 05.7 (10 activities, 2 proteins). See fairfetched.get._demo."""
+        """Tiny offline slice of Papyrus 2024.09.2 (10 activities, 2 proteins). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
@@ -449,7 +457,8 @@ class Papyrus(_Base):
         version: str,
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
-        """Downloads Chembl for version if not yet present in the given cache directory"""
+        """Downloads Papyrus for version if not yet present in the given cache directory"""
+        version = papyrus.canonical_version(version)
         dir = Path(root_dir) / version
         raw_paths: dict[str, Path] = papyrus.ensure_raw_files(
             version, raw_dir=dir / "raw"

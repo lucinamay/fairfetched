@@ -113,3 +113,97 @@ class TestKfoldNulls:
             )
         )["s"]
         assert out.null_count() == 0
+
+
+class TestHoldout:
+    """Oracle: chemsplit `split_result` on the same distinct records."""
+
+    smiles = [f"c1ccccc1{'C' * i}" for i in range(6)] + [
+        f"C1CCNCC1{'O' * i}" for i in range(6)
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _chemsplit(self):
+        pytest.importorskip("chemsplit")
+
+    @staticmethod
+    def _expected(result) -> list[str | None]:
+        out: list[str | None] = [None] * result.n_records
+        for name in ("train", "valid", "test"):
+            for i in getattr(result, name):
+                out[i] = name
+        return out
+
+    def test_temporal_matches_chemsplit_per_compound(self):
+        from datetime import date
+
+        from chemsplit import get_splitter
+
+        from fairfetched.prep.split_expr import Partition, holdout
+
+        dates = [date(2000 + i, 1, 1) for i in range(12)]
+        (r,) = get_splitter("temporal", train_size=0.7, test_size=0.3).split_result(
+            self.smiles, dates=dates
+        )
+        df = pl.DataFrame({"smiles": self.smiles * 2, "date": dates * 2})
+        out = df.select(
+            p=holdout(
+                "smiles",
+                splitter="temporal",
+                dates="date",
+                train_size=0.7,
+                test_size=0.3,
+            )
+        )["p"]
+        assert out.dtype == Partition
+        assert out.to_list() == self._expected(r) * 2
+
+    def test_cold_drug_takes_compound_target_pairs(self):
+        from chemsplit import get_splitter
+
+        from fairfetched.prep.split_expr import holdout
+
+        targets = ["P1", "P2"] * 6
+        pairs = list(zip(self.smiles, targets))
+        (r,) = get_splitter(
+            "cold_drug", train_size=0.7, test_size=0.3, random_state=0
+        ).split_result(pairs)
+        df = pl.DataFrame({"smiles": self.smiles, "target": targets})
+        out = df.select(
+            p=holdout(
+                ("smiles", "target"),
+                splitter="cold_drug",
+                train_size=0.7,
+                test_size=0.3,
+            )
+        )["p"]
+        assert out.to_list() == self._expected(r)
+
+    def test_multi_split_splitter_raises(self):
+        from fairfetched.prep.split_expr import holdout
+
+        df = pl.DataFrame({"smiles": self.smiles})
+        with pytest.raises(ValueError, match="3 splits"):
+            df.select(holdout("smiles", splitter="k_fold", n_splits=3))
+
+    def test_varying_field_within_compound_raises(self):
+        from fairfetched.prep.split_expr import holdout
+
+        df = pl.DataFrame({"smiles": self.smiles * 2, "y": list(range(24))})
+        with pytest.raises(ValueError, match="aggregate"):
+            df.select(
+                holdout(
+                    "smiles", splitter="random", y="y", train_size=0.5, test_size=0.5
+                )
+            )
+
+
+def test_splitters_lists_registry():
+    pytest.importorskip("chemsplit")
+    from chemsplit import list_splitters
+
+    from fairfetched.prep.split_expr import splitters
+
+    out = splitters()
+    assert out.height == len(list_splitters())
+    assert {"id", "family", "group_forming", "requires_dates"} <= set(out.columns)

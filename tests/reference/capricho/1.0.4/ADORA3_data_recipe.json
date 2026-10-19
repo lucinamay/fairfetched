@@ -1,0 +1,42 @@
+{
+  "command": "capricho get --target-ids CHEMBL256 --calculate-pchembl --chembl-release 31 --chembl-version 36 --require-doc-date --max-assay-size 100 --min-assay-size 20 --strict-mutant-removal --output-path ADORA3_data.csv --compound-equality inchikey --chirality",
+  "capricho version": "1.0.4",
+  "molecule_ids": [],
+  "target_ids": [
+    "CHEMBL256"
+  ],
+  "assay_ids": [],
+  "document_ids": [],
+  "calculate_pchembl": true,
+  "output_path": "ADORA3_data.csv",
+  "confidence_scores": [
+    7,
+    8,
+    9
+  ],
+  "chirality": true,
+  "drop_unassigned_chiral": false,
+  "curate_annotation_errors": true,
+  "standard_relation": [
+    "="
+  ],
+  "assay_types": [
+    "B",
+    "F"
+  ],
+  "chembl_release": 31,
+  "metadata_columns": [],
+  "id_columns": [],
+  "skip_not_aggregated": false,
+  "aggregate_mutants": false,
+  "skip_recipe": false,
+  "chembl_backend": "downloader",
+  "chembl_version": "36",
+  "require_doc_date": true,
+  "max_assay_size": 100,
+  "min_assay_size": 20,
+  "min_assay_overlap": 0,
+  "strict_mutant_removal": true,
+  "compound_equality": "inchikey",
+  "value_column": "pchembl_value"
+}

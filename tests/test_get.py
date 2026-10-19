@@ -216,11 +216,11 @@ class TestLocalVersions:
 
     def test_default_root_is_the_dataset_directory(self, tmp_path, monkeypatch):
         monkeypatch.setattr("fairfetched.get.dataset.BASE_DIR", tmp_path)
-        (tmp_path / "papyrus" / "05.7" / "parquet").mkdir(parents=True)
-        (tmp_path / "papyrus" / "05.7" / "parquet" / "protein.parquet").touch()
+        (tmp_path / "papyrus" / "2024.09.2" / "parquet").mkdir(parents=True)
+        (tmp_path / "papyrus" / "2024.09.2" / "parquet" / "protein.parquet").touch()
         (tmp_path / "chembl" / "37" / "parquet").mkdir(parents=True)
         (tmp_path / "chembl" / "37" / "parquet" / "assays.parquet").touch()
-        assert Papyrus.local_versions() == ("05.7",)
+        assert Papyrus.local_versions() == ("2024.09.2",)
 
 
 class TestPapyrusVersions:
@@ -231,7 +231,19 @@ class TestPapyrusVersions:
         versions = papyrus.available_versions()
         assert isinstance(versions, tuple)
         assert len(versions) > 0
-        assert all("." in v for v in versions)  # Version format like "05.6"
+        assert all("." in v for v in versions)  # Version format like "2024.09.2"
+
+    def test_papyrus_versions_are_release_names(self):
+        """Keys must be the release names used as cache directories, not the 05.x aliases."""
+        assert papyrus.available_versions() == ("2022.11.4", "2024.09.2")
+        assert papyrus.latest() == "2024.09.2"
+
+    def test_papyrus_deprecated_alias_resolves_with_a_warning(self):
+        """`05.7` still works but maps onto the release name, so no release is fetched twice."""
+        with pytest.warns(DeprecationWarning):
+            assert papyrus.canonical_version("05.7") == "2024.09.2"
+        with pytest.warns(DeprecationWarning):
+            assert papyrus.source_urls("05.7") == papyrus.source_urls("2024.09.2")
 
     def test_papyrus_get_sources(self):
         """Sources should contain bioactivity, protein, and readme URLs."""
@@ -604,7 +616,7 @@ class TestPapyrusDataClass:
     def test_papyrus_name_is_papyrus(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.name should return 'papyrus'."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -615,7 +627,7 @@ class TestPapyrusDataClass:
     def test_papyrus_build_views_returns_dict(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.build_views() should return dict with expected keys."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -629,7 +641,7 @@ class TestPapyrusDataClass:
     def test_papyrus_lfs_returns_lazy_frames(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.lfs should return dict of LazyFrames."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -642,7 +654,7 @@ class TestPapyrusDataClass:
     def test_papyrus_proteins_property(self, temp_dir, sample_papyrus_parquets):
         """Papyrus.view.proteins and the raw Papyrus.tables.protein table are LazyFrames."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -654,7 +666,7 @@ class TestPapyrusDataClass:
     def test_papyrus_is_frozen(self, temp_dir, sample_papyrus_parquets):
         """Papyrus dataclass should be frozen (immutable)."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -662,12 +674,12 @@ class TestPapyrusDataClass:
         )
         # Frozen dataclass should raise on attribute assignment
         with pytest.raises(FrozenInstanceError):  # FrozenInstanceError
-            obj.version = "05.6"  # ty: ignore[invalid-assignment]
+            obj.version = "2022.11.4"  # ty: ignore[invalid-assignment]
 
     def test_papyrus_string_representation(self, temp_dir, sample_papyrus_parquets):
         """Papyrus should have meaningful string representation."""
         obj = Papyrus(
-            version="05.7",
+            version="2024.09.2",
             raw_paths={"bioactivity": temp_dir / "bio.tsv.xz"},
             parquet_paths=sample_papyrus_parquets,
             dir=temp_dir,
@@ -675,7 +687,7 @@ class TestPapyrusDataClass:
         )
         str_repr = str(obj)
         assert "papyrus" in str_repr.lower()
-        assert "05.7" in str_repr
+        assert "2024.09.2" in str_repr
 
 
 # ============================================================================
