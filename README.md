@@ -176,6 +176,104 @@ selection: duplicates across documents, unit annotation errors and assay overlap
 compared within the rows passed; assay size is counted over `chembl.lfs["activities"]`.
 a filter on other columns (e.g. year) changes what those flags compare against.
 `chembl.view.capricho(**params)` flags the whole database once and caches the result.
+# splitting
+
+needs the `split` extra: `uv add "fairfetched[split]"`.
+
+splitting is done with polars expressions, so it composes with the rest of the query.
+two functions produce a group id per row, and two assign rows to a partition:
+
+| function | from | returns |
+|---|---|---|
+| `cluster_expr.cluster` | `nanoom` | cluster id per row (`pl.Int32`), from a descriptor array |
+| `cluster_expr.groups` | `chemsplit` | group id per row (`pl.Int32`), e.g. a Murcko scaffold |
+| `split_expr.kfold` | `nanoom` | fold number per row (`pl.UInt8`), stratified, groups kept whole |
+| `split_expr.holdout` | `chemsplit` | `"train"` / `"valid"` / `"test"` per row, discarded rows null |
+
+the two backends share the `groups` column, so any grouping feeds any assignment.
+
+```python
+import polars as pl
+
+from fairfetched.prep.cluster_expr import groups
+from fairfetched.prep.split_expr import holdout, kfold, splitters
+
+df = pl.DataFrame(
+    {
+        "name": ["diazepam", "oxazepam", "lorazepam", "nitrazepam",
+                 "ciprofloxacin", "norfloxacin", "ofloxacin", "pefloxacin"],
+        "canonical_smiles": [
+            "CN1c2ccc(Cl)cc2C(c2ccccc2)=NCC1=O",
+            "OC1N=C(c2ccccc2)c2cc(Cl)ccc2NC1=O",
+            "OC1N=C(c2ccccc2Cl)c2cc(Cl)ccc2NC1=O",
+            "O=C1CN=C(c2ccccc2)c2cc([N+](=O)[O-])ccc2N1",
+            "O=C(O)c1cn(C2CC2)c2cc(N3CCNCC3)c(F)cc2c1=O",
+            "CCn1cc(C(=O)O)c(=O)c2cc(F)c(N3CCNCC3)cc21",
+            "CC1COc2c(N3CCN(C)CC3)c(F)cc3c(=O)c(C(=O)O)cn1c23",
+            "CCn1cc(C(=O)O)c(=O)c2cc(F)c(N3CCN(C)CC3)cc21",
+        ],
+        "pchembl_value": [7.1, 6.8, 7.9, 6.2, 8.4, 7.7, 8.1, 7.5],
+        "year": [1963, 1965, 1977, 1965, 1987, 1986, 1985, 1985],
+    }
+)
+
+out = df.with_columns(
+    scaffold=groups("canonical_smiles", splitter="murcko_scaffold")
+).with_columns(
+    fold=kfold(2, stratify="pchembl_value", groups="scaffold"),
+    split=holdout(
+        "canonical_smiles", splitter="temporal", dates="year",
+        train_size=0.5, test_size=0.5,
+    ),
+)
+out.select("name", "year", "scaffold", "fold", "split")
+# shape: (8, 5)
+# ┌───────────────┬──────┬──────────┬──────┬───────┐
+# │ name          ┆ year ┆ scaffold ┆ fold ┆ split │
+# │ ---           ┆ ---  ┆ ---      ┆ ---  ┆ ---   │
+# │ str           ┆ i64  ┆ i32      ┆ u8   ┆ enum  │
+# ╞═══════════════╪══════╪══════════╪══════╪═══════╡
+# │ diazepam      ┆ 1963 ┆ 0        ┆ 1    ┆ train │
+# │ oxazepam      ┆ 1965 ┆ 0        ┆ 1    ┆ train │
+# │ lorazepam     ┆ 1977 ┆ 0        ┆ 1    ┆ train │
+# │ nitrazepam    ┆ 1965 ┆ 0        ┆ 1    ┆ train │
+# │ ciprofloxacin ┆ 1987 ┆ 1        ┆ 1    ┆ test  │
+# │ norfloxacin   ┆ 1986 ┆ 2        ┆ 0    ┆ test  │
+# │ ofloxacin     ┆ 1985 ┆ 3        ┆ 0    ┆ test  │
+# │ pefloxacin    ┆ 1985 ┆ 2        ┆ 0    ┆ test  │
+# └───────────────┴──────┴──────────┴──────┴───────┘
+```
+
+the four benzodiazepines share one Murcko scaffold; the quinolones do not, because
+ciprofloxacin's cyclopropyl and ofloxacin's fused oxazine are rings, not side chains.
+
+the two `with_columns` calls cannot be merged: polars evaluates the expressions of one
+call against the input frame, so `fold` and `split` only see `scaffold` after it is
+written. `with_columns_seq` does not change this.
+
+`groups` and `holdout` run on the distinct structures and map the result back, so one
+compound never straddles a partition, and `train_size` counts compounds, not rows.
+pass already-standardised structures (see `prep.mol_expr`); a `pl.Array`
+descriptor column or a `(compound, target)` pair of columns works in place of SMILES.
+
+`splitters()` lists the 64 chemsplit splitters, with the family and the strictness of
+each. ids where `group_forming` is true go to `groups`, the rest to `holdout`:
+
+```python
+splitters().filter(requires_dates=True).select("id", "family", "strictness")
+# shape: (2, 3)
+# ┌─────────────────┬──────────────┬────────────┐
+# │ id              ┆ family       ┆ strictness │
+# │ ---             ┆ ---          ┆ ---        │
+# │ str             ┆ str          ┆ str        │
+# ╞═════════════════╪══════════════╪════════════╡
+# │ temporal        ┆ lineage      ┆ strict     │
+# │ deposition_date ┆ biomolecular ┆ strict     │
+# └─────────────────┴──────────────┴────────────┘
+```
+
+which splitter answers which question is covered by the chemsplit README's
+"24 deployment scenarios": <https://github.com/OlivierBeq/chemsplit>.
 
 # roadmap
 
@@ -184,10 +282,10 @@ a filter on other columns (e.g. year) changes what those flags compare against.
     - [x] simple nested filtering
     - [ ] efficient nested filtering
     - [ ] all-version support
-    - [ ] built-in pivots
+    - [x] built-in pivots
 - [ ] chembl database support
     - [x] database to tables (parquet)
-    - [ ] intuitive pre-merged flat files
+    - [x] intuitive pre-merged flat files
     - [ ] database visualisation
     - [x] remove the need for storing uncompressed .db (`_tables.json` lists the finished tables)
 - [ ] reproducion from downloaded raw file
@@ -195,5 +293,5 @@ a filter on other columns (e.g. year) changes what those flags compare against.
 - [ ] automated time-url logging and manifest files
 - [ ] well-organised logging
 - [ ] dependency minimisation
-- [ ] other database support
+- [x] other database support
 - [ ] preservation of api and parsing logic per major version

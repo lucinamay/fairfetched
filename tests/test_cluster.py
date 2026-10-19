@@ -63,3 +63,42 @@ class TestCluster:
             c=cluster("fp", method="random", n_clusters=12)
         ).with_columns(split=kfold(3, stratify="active", groups="c"))
         assert out.group_by("c").agg(pl.col("split").n_unique())["split"].max() == 1
+
+
+SMILES = [f"c1ccccc1{'C' * i}" for i in range(6)] + [
+    f"C1CCNCC1{'O' * i}" for i in range(6)
+]
+
+
+class TestGroups:
+    def test_matches_chemsplit_on_distinct_smiles_and_maps_back_to_rows(self):
+        """Oracle: chemsplit `compute_groups` on the distinct SMILES list; rows
+        repeat each compound, so the column repeats the label."""
+        pytest.importorskip("chemsplit")
+        from chemsplit import get_splitter
+
+        from fairfetched.prep.cluster_expr import groups
+
+        expected = get_splitter("murcko_scaffold").compute_groups(SMILES).tolist()
+        df = pl.DataFrame({"smiles": SMILES * 3})
+        out = df.select(g=groups("smiles", splitter="murcko_scaffold"))["g"]
+        assert out.dtype == pl.Int32
+        assert out.to_list() == expected * 3
+
+    def test_features_feed_kfold(self, df):
+        """pl.Array in; the ids are a valid `groups` for nanoom's `kfold`."""
+        pytest.importorskip("chemsplit")
+        from fairfetched.prep.cluster_expr import groups
+
+        out = df.with_columns(
+            g=groups("fp", splitter="butina", cutoff=0.6)
+        ).with_columns(split=kfold(3, stratify="active", groups="g"))
+        assert out.group_by("g").agg(pl.col("split").n_unique())["split"].max() == 1
+
+    def test_null_smiles_raise(self):
+        pytest.importorskip("chemsplit")
+        from fairfetched.prep.cluster_expr import groups
+
+        df = pl.DataFrame({"smiles": SMILES[:3] + [None]})
+        with pytest.raises(ValueError, match="null"):
+            df.select(groups("smiles", splitter="murcko_scaffold"))

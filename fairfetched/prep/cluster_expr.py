@@ -3,6 +3,15 @@ from typing import Literal
 
 import polars as pl
 
+from fairfetched.prep.split_expr import (
+    _X,
+    Records,
+    _as_records,
+    _pack,
+    _records,
+    _unique_apply,
+)
+
 ClusterMethod = Literal[
     "kmeans",
     "dbscan",
@@ -55,4 +64,58 @@ def _array_to_clusters(s: pl.Series, method: ClusterMethod, **kwargs) -> pl.Seri
     return pl.Series(s.name, labels, dtype=pl.Int32)
 
 
-__all__ = ["cluster"]
+def groups(
+    X: Records,
+    *,
+    splitter: str,
+    seed: int = 0,
+    n_jobs: int = 1,
+    **params,
+) -> pl.Expr:
+    """Group id per row (pl.Int32, dense 0..g-1), from a group-forming
+    `chemsplit` splitter (extra: ``fairfetched[split]``): "murcko_scaffold",
+    "generic_scaffold", "scaffold_tree", "butina", "sphere_exclusion", ...;
+    `split_expr.splitters()` lists them (`group_forming`).
+
+    X: a SMILES column, a pl.Array descriptor column, or a (compound, target)
+        pair of columns; structures must already be standardized. Groups are
+        formed on the distinct `X` (one RDKit parse per compound) and mapped
+        back, so equal structures share a group.
+    params: splitter parameters, e.g. `cutoff` for "butina".
+
+    Output feeds `kfold(groups=...)` or `holdout(groups=...)`, like `cluster()`.
+    Dataset-independent scaffold ids are `MolExpr.scaffold_cluster` instead.
+
+    Raises on null `X`. Similarity splitters build pairwise distances and raise
+    chemsplit's `ScalabilityError` above their limits.
+
+    >>> df = df.with_columns(scaffold=groups("canonical_smiles", splitter="murcko_scaffold"))  # doctest: +SKIP
+    """
+    return _pack(X=_as_records(X)).map_batches(
+        partial(
+            _struct_to_groups,
+            splitter=splitter,
+            seed=seed,
+            n_jobs=n_jobs,
+            params=params,
+        ),
+        return_dtype=pl.Int32,
+    )
+
+
+def _struct_to_groups(
+    s: pl.Series, splitter: str, seed: int, n_jobs: int, params: dict
+) -> pl.Series:
+    """`map_batches` worker: struct{X} -> group id per row."""
+    from chemsplit import get_splitter
+
+    sp = get_splitter(splitter, random_state=seed, n_jobs=n_jobs, **params)
+
+    def fn(distinct: pl.DataFrame) -> pl.Series:
+        labels = sp.compute_groups(_records(distinct.get_column(_X)), standardize=False)
+        return pl.Series(labels, dtype=pl.Int32)
+
+    return _unique_apply(s, fn)
+
+
+__all__ = ["cluster", "groups"]
