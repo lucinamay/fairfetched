@@ -4,6 +4,7 @@ This module provides functions to ensure the presence of raw and cleaned Papyrus
 and defines the Papyrus_57 database configuration.
 """
 
+import warnings
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -19,20 +20,43 @@ from fairfetched.utils import (
 )
 from fairfetched.utils.raw import scan_raw
 
+# Keyed by Papyrus' own release names, which are also the cache directory names. The `05.x`
+# names are the deprecated papyrus-scripts aliases; Zenodo still uses them inside filenames.
 PAPYRUS_VERSIONS: dict[str, dict[str, str]] = {
-    "05.6": {
+    "2022.11.4": {
         "bioactivity": "https://zenodo.org/records/7373214/files/05.6_combined_set_with_stereochemistry.tsv.xz",
         # "bioactivity_nostereochemistry": "https://zenodo.org/records/7373214/files/05.6_combined_set_without_stereochemistry.tsv.xz",
         "readme": "https://zenodo.org/records/7373214/files/README.txt",
         "protein": "https://zenodo.org/records/7373214/files/05.6_combined_set_protein_targets.tsv.xz",
     },
-    "05.7": {
+    "2024.09.2": {
         "bioactivity": "https://zenodo.org/records/13987985/files/05.7_combined_set_with_stereochemistry.tsv.xz",
         # "bioactivity_nostereochemistry": "https://zenodo.org/records/13987985/files/05.7_combined_set_without_stereochemistry.tsv.xz",
         "readme": "https://zenodo.org/records/13987985/files/README.txt",
         "protein": "https://zenodo.org/records/13987985/files/05.7_combined_set_protein_targets.tsv.xz",
     },
 }
+
+
+DEPRECATED_VERSION_ALIASES: dict[str, str] = {"05.6": "2022.11.4", "05.7": "2024.09.2"}
+
+
+def canonical_version(version: str) -> str:
+    """Map a deprecated `05.x` alias onto the release name used as the cache directory.
+
+    Keying on `05.7` while the cache directory was named after the release made the package
+    re-download a release it already held, so the two names are reconciled here.
+    """
+    v = str(version)
+    if v in DEPRECATED_VERSION_ALIASES:
+        canonical = DEPRECATED_VERSION_ALIASES[v]
+        warnings.warn(
+            f"Papyrus version {v!r} is a deprecated alias; use {canonical!r}.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return canonical
+    return v
 
 
 def available_versions() -> tuple[str, ...]:
@@ -44,7 +68,7 @@ def latest() -> str:
 
 
 def source_urls(version: str) -> dict[str, str]:
-    return PAPYRUS_VERSIONS[str(version)]
+    return PAPYRUS_VERSIONS[canonical_version(version)]
 
 
 def ensure_raw_files(
@@ -52,7 +76,7 @@ def ensure_raw_files(
 ) -> dict[str, Path]:
     """Download if missing, return path to raw file."""
     if raw_dir is None:
-        raw_dir = BASE_DIR / "papyrus" / version / "raw"
+        raw_dir = BASE_DIR / "papyrus" / canonical_version(version) / "raw"
     raw_dir = Path(raw_dir)
 
     return {
@@ -120,7 +144,7 @@ def help() -> None:
     print("""
         Example usage:
         ```
-        raw = ensure_raw_files("05.7")
+        raw = ensure_raw_files("2024.09.2")
         tables = cleanly_scan_parquet_tables(raw)
         views = build_views(tables)
         views["full"].sink_parquet("output.parquet")

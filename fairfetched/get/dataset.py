@@ -411,7 +411,7 @@ class Chembl(_Base):
 class Papyrus(_Base):
     """Papyrus wrapper: download once, then read lazily.
 
-    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("05.7")``) downloads a
+    ``Papyrus.from_latest()`` (or ``Papyrus.from_version("2024.09.2")``) downloads a
     real release. ``Papyrus.demo()`` returns a tiny offline sample with the same
     API, used by the examples here:
 
@@ -443,7 +443,7 @@ class Papyrus(_Base):
 
     @classmethod
     def demo(cls) -> "Papyrus":
-        """Tiny offline slice of Papyrus 05.7 (10 activities, 2 proteins). See fairfetched.get._demo."""
+        """Tiny offline slice of Papyrus 2024.09.2 (10 activities, 2 proteins). See fairfetched.get._demo."""
         return cls(
             version="demo",
             raw_paths={},
@@ -459,6 +459,7 @@ class Papyrus(_Base):
         root_dir: Path | str = f"{BASE_DIR}/papyrus",
     ) -> "Papyrus":
         """Downloads Papyrus for version if not yet present in the given cache directory"""
+        version = papyrus.canonical_version(version)
         dir = Path(root_dir) / version
         raw_paths: dict[str, Path] = papyrus.ensure_raw_files(
             version, raw_dir=dir / "raw"
